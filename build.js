@@ -38,6 +38,7 @@ function buildHeader() {
     icon: userscript.icon,
     license: userscript.license || pkg.license,
     noframes: userscript.noframes === true,
+    'run-at': userscript.runAt || '',
     downloadURL: userscript.downloadURL,
     updateURL: userscript.updateURL,
   };

@@ -28,7 +28,7 @@ bilibili-blacklist-helloworld/
 ├── .gitignore                   # 忽略 dist、node_modules 等
 ├── .gitattributes               # 统一 LF
 ├── src/
-│   └── main.js                  # 唯一的源代码：console.log('hello world')
+│   └── main.js                  # 唯一的源代码：console.log('hello world')（带就绪保护）
 ├── scripts/
 │   └── dev.js                   # 一键开发脚本
 └── test/
@@ -87,6 +87,15 @@ npm run dev
 ```
 hello world
 ```
+
+### 执行时机（重要）
+
+脚本不会在页面加载一开始就抢跑，而是做了两层“就绪”保护：
+
+1. **`@run-at document-idle`**：由 `build.config.json` 控制，让脚本在页面解析完成后才注入；
+2. **`src/main.js` 内的兜底等待**：等待 `DOMContentLoaded`，再等待 B 站初始数据 `window.__INITIAL_STATE__`（其中含 `related` / `availableVideoList` 等数组）就绪，带 3 秒超时兜底，避免无限等待。
+
+这样真正接入业务逻辑时，不会因为“跑得比网页数据加载还早”而读不到 DOM 或数据。
 
 ---
 

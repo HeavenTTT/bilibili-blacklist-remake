@@ -14,7 +14,8 @@
       "GM_addStyle"
     ],
     "license": "MIT",
-    "noframes": true
+    "noframes": true,
+    "runAt": "document-idle"
   },
   "src": {
     "outputDir": "dist",
