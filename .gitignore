@@ -1,0 +1,10 @@
+# 构建产物
+/dist/
+
+# 依赖 / 虚拟环境
+node_modules/
+.venv/
+
+# 编辑器
+.DS_Store
+*.log

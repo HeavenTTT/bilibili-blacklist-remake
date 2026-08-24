@@ -1,0 +1,24 @@
+{
+  "name": "bilibili-blacklist-helloworld",
+  "version": "0.1.0",
+  "description": "重写脚手架：沿用 Bilibili-BlackList 的 build/dev 工作流，当前仅包含一个入口，向控制台打印 hello world。",
+  "main": "build.js",
+  "scripts": {
+    "build": "node build.js",
+    "dev": "node scripts/dev.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HeavenTTT/bilibili-blacklist.git"
+  },
+  "keywords": [
+    "bilibili",
+    "tampermonkey",
+    "userscript",
+    "hello-world",
+    "scaffold"
+  ],
+  "author": "HeavenTTT",
+  "license": "MIT",
+  "devDependencies": {}
+}

@@ -1,0 +1,25 @@
+{
+  "userscript": {
+    "name": "Bilibili-BlackList HelloWorld",
+    "namespace": "https://github.com/HeavenTTT/bilibili-blacklist",
+    "author": "HeavenTTT",
+    "description": "重写脚手架：沿用 Bilibili-BlackList 的 build/dev 工作流，当前仅输出 hello world。",
+    "icon": "https://www.bilibili.com/favicon.ico",
+    "match": [
+      "*://*.bilibili.com/*"
+    ],
+    "grant": [
+      "GM_setValue",
+      "GM_getValue",
+      "GM_addStyle"
+    ],
+    "license": "MIT"
+  },
+  "src": {
+    "outputDir": "dist",
+    "outputBase": "bilibili-blacklist-helloworld.user.js",
+    "modules": [
+      "src/main.js"
+    ]
+  }
+}
