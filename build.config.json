@@ -13,7 +13,8 @@
       "GM_getValue",
       "GM_addStyle"
     ],
-    "license": "MIT"
+    "license": "MIT",
+    "noframes": true
   },
   "src": {
     "outputDir": "dist",

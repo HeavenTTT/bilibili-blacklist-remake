@@ -37,18 +37,21 @@ function buildHeader() {
     grant: userscript.grant || [],
     icon: userscript.icon,
     license: userscript.license || pkg.license,
+    noframes: userscript.noframes === true,
     downloadURL: userscript.downloadURL,
     updateURL: userscript.updateURL,
   };
 
   const entries = Object.entries(meta).filter(
-    ([, value]) => value !== undefined && value !== null && value !== ''
+    ([, value]) => value !== undefined && value !== null && value !== '' && value !== false
   );
   const keyWidth = Math.max(...entries.map(([key]) => key.length));
   const lines = ['// ==UserScript=='];
   for (const [key, value] of entries) {
     const label = ('// @' + key).padEnd('// @'.length + keyWidth + 1);
-    if (Array.isArray(value)) {
+    if (value === true) {
+      lines.push(label.trimEnd());
+    } else if (Array.isArray(value)) {
       for (const item of value) lines.push(label + item);
     } else {
       lines.push(label + value);

@@ -12,6 +12,7 @@
 // @grant        unsafeWindow
 // @connect      localhost
 // @connect      127.0.0.1
+// @noframes
 // @license      MIT
 // ==/UserScript==
 
