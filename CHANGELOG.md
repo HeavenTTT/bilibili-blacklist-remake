@@ -1,5 +1,18 @@
 # 更新记录 (Changelog)
 
+## [0.3.0] - 模块化拆分
+
+### 重构
+- 将 `src/main.js` 按功能拆分为多个模块：
+  - `src/config/selectors.js`：所有 CSS 选择器
+  - `src/utils/query.js`：查询工具
+  - `src/utils/log.js`：控制台日志输出
+  - `src/core/cards.js`：卡片查找与字段提取
+  - `src/observer/observer.js`：变动观察
+  - `src/main.js`：主入口
+- 各文件增加简体中文说明注释，各方法增加简单 JSDoc 注释
+- `collectCards()` 现在返回**卡片本体 `el`**：每项为 `{ title, up, bvid, el }`，便于后续直接改卡片 / 添加按钮
+
 ## [0.2.0] - 卡片观察
 
 ### 新增

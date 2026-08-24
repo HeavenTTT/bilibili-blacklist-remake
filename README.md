@@ -1,6 +1,6 @@
 # Bilibili-BlackList HelloWorld
 
-> 从 `bilibili-blacklist` 完全重写而来的新分支工程：**沿用相同的 build / dev 工作流**，但项目结构、构建配置与开发脚本都更精细、更干净。当前工程只包含**一个源代码文件**，向控制台打印 `hello world`。
+> 从 `bilibili-blacklist` 完全重写而来的新分支工程：**沿用相同的 build / dev 工作流**，但项目结构、构建配置与开发脚本都更精细、更干净。源码按功能拆分为多个模块，当前用于观察 B 站视频卡片并提取 标题 / UP 名 / bvid。
 
 ---
 
@@ -8,7 +8,7 @@
 
 | 方面 | 旧工程（bilibili-blacklist） | 新工程（本工程） |
 | ---- | ---- | ---- |
-| 代码规模 | 多个业务模块 | 当前仅 1 个入口文件 |
+| 代码规模 | 多个业务模块 | 按功能拆分的多个模块 |
 | 模块顺序 | 硬编码在 `build.js` | 配置在 `build.config.json` |
 | userscript 元数据 | 硬编码在 `build.js` | 配置在 `build.config.json` |
 | 输出文件名/目录 | 硬编码 | 配置驱动 |
@@ -28,7 +28,16 @@ bilibili-blacklist-helloworld/
 ├── .gitignore                   # 忽略 dist、node_modules 等
 ├── .gitattributes               # 统一 LF
 ├── src/
-│   └── main.js                  # 唯一的入口：观察视频卡片并打印 标题/UP 名/bvid
+│   ├── config/
+│   │   └── selectors.js         # 所有 CSS 选择器（数组，便于修改）
+│   ├── utils/
+│   │   ├── query.js             # 查询工具（queryFirst / queryFirstText）
+│   │   └── log.js               # 控制台日志输出
+│   ├── core/
+│   │   └── cards.js             # 卡片查找与字段提取（含 collectCards，返回卡片本体 el）
+│   ├── observer/
+│   │   └── observer.js          # MutationObserver 监听新增卡片
+│   └── main.js                  # 主入口：启动扫描与观察
 ├── scripts/
 │   └── dev.js                   # 一键开发脚本
 └── test/
@@ -93,11 +102,11 @@ bvid  : <BV 号>
 
 - 初次扫描打印页面已有的卡片；
 - 通过 `MutationObserver` 监听新增卡片（无限滚动 / SPA 加载），只对新出现的卡片打印；
-- 结果数组会暴露为 `window.__helloCards`，便于在控制台直接查看。
+- 结果数组会暴露为 `window.__helloCards`，每一项为 `{ title, up, bvid, el }`，其中 **`el` 就是卡片 DOM 本体**，可直接用于后续改卡片 / 加按钮。
 
 ### 选择器管理（易改）
 
-所有 CSS 选择器都集中在 `src/main.js` 顶部的 `SELECTORS` 数组里（卡片根 / 标题 / UP 名 / bvid 链接），
+所有 CSS 选择器都集中在 `src/config/selectors.js` 的 `SELECTORS` 数组里（卡片根 / 标题 / UP 名 / bvid 链接），
 B 站改版时只需增删数组项即可，不用到处改代码。
 
 ### 执行时机（重要）

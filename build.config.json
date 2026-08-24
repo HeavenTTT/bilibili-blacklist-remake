@@ -21,6 +21,11 @@
     "outputDir": "dist",
     "outputBase": "bilibili-blacklist-helloworld.user.js",
     "modules": [
+      "src/config/selectors.js",
+      "src/utils/query.js",
+      "src/utils/log.js",
+      "src/core/cards.js",
+      "src/observer/observer.js",
       "src/main.js"
     ]
   }
