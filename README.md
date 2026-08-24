@@ -28,7 +28,7 @@ bilibili-blacklist-helloworld/
 ├── .gitignore                   # 忽略 dist、node_modules 等
 ├── .gitattributes               # 统一 LF
 ├── src/
-│   └── main.js                  # 唯一的源代码：console.log('hello world')（带就绪保护）
+│   └── main.js                  # 唯一的入口：观察视频卡片并打印 标题/UP 名/bvid
 ├── scripts/
 │   └── dev.js                   # 一键开发脚本
 └── test/
@@ -82,11 +82,18 @@ npm run dev
 
 ## 🧪 当前功能
 
-打开 B 站任意页面，控制台会输出：
+打开 B 站页面后，脚本会观察页面上的**全部视频卡片**，并为每张卡片打印：
 
 ```
-hello world
+[HelloWorld] 视频卡片 - <视频标题>
+title : <视频标题>
+up    : <UP 主名字>
+bvid  : <BV 号>
 ```
+
+- 初次扫描打印页面已有的卡片；
+- 通过 `MutationObserver` 监听新增卡片（无限滚动 / SPA 加载），只对新出现的卡片打印；
+- 结果数组会暴露为 `window.__helloCards`，便于在控制台直接查看。
 
 ### 执行时机（重要）
 
