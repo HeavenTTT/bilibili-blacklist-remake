@@ -1,9 +1,9 @@
 {
   "userscript": {
-    "name": "Bilibili-BlackList HelloWorld",
+    "name": "Bilibili-BlackList Remake",
     "namespace": "https://github.com/HeavenTTT/bilibili-blacklist",
     "author": "HeavenTTT",
-    "description": "重写脚手架：沿用 Bilibili-BlackList 的 build/dev 工作流，当前仅输出 hello world。",
+    "description": "Bilibili-BlackList 完全重写版：观察 B 站视频卡片并提取 标题 / UP 主名字 / bvid。",
     "icon": "https://www.bilibili.com/favicon.ico",
     "match": [
       "*://*.bilibili.com/*"
@@ -19,7 +19,7 @@
   },
   "src": {
     "outputDir": "dist",
-    "outputBase": "bilibili-blacklist-helloworld.user.js",
+    "outputBase": "bilibili-blacklist-remake.user.js",
     "modules": [
       "src/config/selectors.js",
       "src/utils/query.js",

@@ -9,7 +9,7 @@
  * @param {{title: string, up: string, bvid: string, el: HTMLElement}} card  卡片信息
  */
 function printCard(card) {
-  console.groupCollapsed("[HelloWorld] 视频卡片 - " + (card.title || "(无标题)"));
+  console.groupCollapsed("[🫥BlackList] 视频卡片 - " + (card.title || "(无标题)"));
   console.log("title :", card.title);
   console.log("up    :", card.up);
   console.log("bvid  :", card.bvid);

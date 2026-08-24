@@ -1,4 +1,4 @@
-# Bilibili-BlackList HelloWorld
+# Bilibili-BlackList Remake
 
 > 从 `bilibili-blacklist` 完全重写而来的新分支工程：**沿用相同的 build / dev 工作流**，但项目结构、构建配置与开发脚本都更精细、更干净。源码按功能拆分为多个模块，当前用于观察 B 站视频卡片并提取 标题 / UP 名 / bvid。
 
@@ -19,7 +19,7 @@
 ## 🗂️ 目录结构
 
 ```
-bilibili-blacklist-helloworld/
+bilibili-blacklist-remake/
 ├── build.js                     # 构建脚本（合并模块 -> 单个 .user.js）
 ├── build.config.json            # 构建配置（元数据 + 模块顺序 + 输出文件）
 ├── package.json                 # npm 脚本（build / dev）
@@ -41,7 +41,7 @@ bilibili-blacklist-helloworld/
 ├── scripts/
 │   └── dev.js                   # 一键开发脚本
 └── test/
-    ├── bilibili-blacklist-helloworld.dev.user.js  # 油猴加载器（装一次）
+    ├── bilibili-blacklist-remake.dev.user.js  # 油猴加载器（装一次）
     └── s.bat                    # Windows 双击启动开发环境
 ```
 
@@ -60,14 +60,14 @@ node build.js
 构建产物：
 
 ```
-dist/bilibili-blacklist-helloworld.user.js
+dist/bilibili-blacklist-remake.user.js
 ```
 
 ### 开发（推荐）
 
 #### 1. 一次性安装加载器
 
-打开 `test/bilibili-blacklist-helloworld.dev.user.js`，按油猴提示安装（或用浏览器访问 `http://localhost:5173/test/bilibili-blacklist-helloworld.dev.user.js` 安装）。
+打开 `test/bilibili-blacklist-remake.dev.user.js`，按油猴提示安装（或用浏览器访问 `http://localhost:5173/test/bilibili-blacklist-remake.dev.user.js` 安装）。
 
 #### 2. 启动开发环境
 
@@ -79,7 +79,7 @@ npm run dev
 
 启动后自动完成：
 
-1. 首次构建产物到 `dist/bilibili-blacklist-helloworld.user.js`；
+1. 首次构建产物到 `dist/bilibili-blacklist-remake.user.js`；
 2. 监听 `src/` 目录，代码变更后自动重新构建（防抖 150ms）；
 3. 在 `http://localhost:5173` 启动静态服务器（`no-cache` + CORS）。
 
@@ -94,7 +94,7 @@ npm run dev
 打开 B 站页面后，脚本会观察页面上的**全部视频卡片**，并为每张卡片打印：
 
 ```
-[HelloWorld] 视频卡片 - <视频标题>
+[🫥BlackList] 视频卡片 - <视频标题>
 title : <视频标题>
 up    : <UP 主名字>
 bvid  : <BV 号>
@@ -102,7 +102,7 @@ bvid  : <BV 号>
 
 - 初次扫描打印页面已有的卡片；
 - 通过 `MutationObserver` 监听新增卡片（无限滚动 / SPA 加载），只对新出现的卡片打印；
-- 结果数组会暴露为 `window.__helloCards`，每一项为 `{ title, up, bvid, el }`，其中 **`el` 就是卡片 DOM 本体**，可直接用于后续改卡片 / 加按钮。
+- 结果数组会暴露为 `window.__blacklistCards`，每一项为 `{ title, up, bvid, el }`，其中 **`el` 就是卡片 DOM 本体**，可直接用于后续改卡片 / 加按钮。
 
 ### 选择器管理（易改）
 

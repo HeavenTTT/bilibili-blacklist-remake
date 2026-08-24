@@ -1,7 +1,7 @@
 {
-  "name": "bilibili-blacklist-helloworld",
+  "name": "bilibili-blacklist-remake",
   "version": "0.1.0",
-  "description": "重写脚手架：沿用 Bilibili-BlackList 的 build/dev 工作流，当前仅包含一个入口，向控制台打印 hello world。",
+  "description": "Bilibili-BlackList 完全重写版：观察 B 站视频卡片并提取 标题 / UP 名 / bvid。",
   "main": "build.js",
   "scripts": {
     "build": "node build.js",
@@ -15,8 +15,8 @@
     "bilibili",
     "tampermonkey",
     "userscript",
-    "hello-world",
-    "scaffold"
+    "blacklist",
+    "remake"
   ],
   "author": "HeavenTTT",
   "license": "MIT",

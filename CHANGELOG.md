@@ -1,5 +1,14 @@
 # 更新记录 (Changelog)
 
+## [0.4.0] - 重命名为 Remake
+
+### 变更
+- 工程名由 `bilibili-blacklist-helloworld` 改为 `bilibili-blacklist-remake`
+- 油猴脚本名 / 加载器名改为 `Bilibili-BlackList Remake`
+- 构建产物改为 `dist/bilibili-blacklist-remake.user.js`
+- 控制台日志前缀 `[HelloWorld]` 改为 `[🫥BlackList]`
+- 调试数组 `window.__helloCards` 改为 `window.__blacklistCards`
+
 ## [0.3.0] - 模块化拆分
 
 ### 重构
@@ -18,7 +27,7 @@
 ### 新增
 - 观察 B 站页面上的全部视频卡片，提取并打印 **标题 / UP 主名字 / bvid**
 - 初次扫描 + `MutationObserver` 监听新增卡片（无限滚动 / SPA 加载），按 bvid 去重
-- 结果数组暴露为 `window.__helloCards`
+- 结果数组暴露为 `window.__blacklistCards`
 
 ### 修复
 - 所有 CSS 选择器集中到 `SELECTORS` 数组，便于统一修改

@@ -43,8 +43,8 @@ function whenBiliDataReady(callback, timeoutMs) {
 whenDomReady(function () {
   whenBiliDataReady(function () {
     var cards = scan();
-    window.__helloCards = cards;   // 每项含 { title, up, bvid, el }
-    console.log("[HelloWorld] 初次扫描共观察到 " + cards.length + " 个视频卡片");
+    window.__blacklistCards = cards;   // 每项含 { title, up, bvid, el }
+    console.log("[🫥BlackList] 初次扫描共观察到 " + cards.length + " 个视频卡片");
     observeCards();
   });
 });

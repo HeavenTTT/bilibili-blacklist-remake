@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Bilibili-BlackList HelloWorld -Dev (Loader)
+// @name         Bilibili-BlackList Remake -Dev (Loader)
 // @namespace    https://github.com/HeavenTTT/bilibili-blacklist
 // @version      0.1.0
 // @author       HeavenTTT
@@ -19,10 +19,10 @@
 (function () {
   'use strict';
 
-  var DEV_URL = 'http://localhost:5173/dist/bilibili-blacklist-helloworld.user.js?t=' + Date.now();
+  var DEV_URL = 'http://localhost:5173/dist/bilibili-blacklist-remake.user.js?t=' + Date.now();
 
   function fail(msg) {
-    console.error('[Bilibili-BlackList HelloWorld Dev] ' + msg + '（请确认已在项目根目录运行 npm run dev）');
+    console.error('[🫥BlackList Dev] ' + msg + '（请确认已在项目根目录运行 npm run dev）');
   }
 
   GM_xmlhttpRequest({
@@ -37,9 +37,9 @@
       var code = res.responseText.replace(/^\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==\s*/, '');
       try {
         eval(code);
-        console.log('[Bilibili-BlackList HelloWorld Dev] 已加载最新构建 ' + new Date().toLocaleTimeString());
+        console.log('[🫥BlackList Dev] 已加载最新构建 ' + new Date().toLocaleTimeString());
       } catch (e) {
-        console.error('[Bilibili-BlackList HelloWorld Dev] 执行最新构建时出错：', e);
+        console.error('[🫥BlackList Dev] 执行最新构建时出错：', e);
       }
     },
     onerror: function () {
