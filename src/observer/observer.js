@@ -1,39 +1,30 @@
 /*
  * 变动观察模块（增量处理）
  * -----------------------------------------------------------
- * 原则：不做“全量搜寻” —— 每张卡片只在插入时处理一次。
- *   - 初次启动仍会对页面“已存在”的卡片做一次扫描（无法避免）；
- *   - 之后只通过 MutationObserver 监听新增节点，对“新增卡片”即时校验 + 屏蔽。
- *
- * 去重：用 WeakSet 记录“已处理过的 DOM 节点”。节点被移除后会被浏览器回收，
- *       不会像全局数组那样无限累积，也不会强引用 el。
+ * 只在“新卡片插入”时即时处理：提取 -> 加屏蔽按钮 -> 校验 -> 屏蔽。
+ * 用 WeakSet 记录已处理节点，节点移除后随 GC 释放，不累积 el。
  */
-var PROCESSED_CARDS = new WeakSet();  // 已处理过的卡片 DOM 节点（弱引用）
-var RENDER_OBSERVER = null;           // MutationObserver 实例，方便调试时停止
+var PROCESSED_CARDS = new WeakSet();
+var RENDER_OBSERVER = null;
 var STATS = { processed: 0, blocked: 0 };
 
 /**
- * 根据一个新增节点找到“它本身或它内部”的卡片节点。
- * @param {Element} node  新增的元素节点
+ * 根据新增节点找到“它本身或内部”的卡片节点。
+ * @param {Element} node
  * @returns {HTMLElement[]}
  */
 function collectCardEls(node) {
   var cardSel = SELECTORS.card.join(",");
   var out = [];
-  // 1) 节点本身或向上能匹配到卡片
   var self = node.closest ? node.closest(cardSel) : null;
-  if (self) {
-    out.push(self);
-    return out;
-  }
-  // 2) 节点是容器，内部可能包含多张卡片
+  if (self) { out.push(self); return out; }
   var inside = node.querySelectorAll ? node.querySelectorAll(cardSel) : [];
   for (var i = 0; i < inside.length; i++) out.push(inside[i]);
   return out;
 }
 
 /**
- * 处理单张卡片：提取 -> 校验 -> 屏蔽 -> 打印。
+ * 处理单张卡片：加“屏蔽”按钮；若命中黑名单则屏蔽并计数。
  * @param {HTMLElement} cardEl  卡片节点
  */
 function handleCard(cardEl) {
@@ -45,6 +36,10 @@ function handleCard(cardEl) {
   PROCESSED_CARDS.add(cardEl);
   STATS.processed++;
 
+  // 通用“屏蔽”按钮（悬停显示）
+  addBlockButton(card, cardEl);
+
+  // 黑名单校验 + 屏蔽
   if (validateCard(card)) {
     blockCard(card, cardEl);
     STATS.blocked++;
@@ -53,7 +48,7 @@ function handleCard(cardEl) {
 }
 
 /**
- * MutationObserver 回调：只处理“新增”的节点，不做全量扫描。
+ * MutationObserver 回调：只处理“新增”节点，不做全量扫描。
  * @param {MutationRecord[]} mutations
  */
 function onMutations(mutations) {
@@ -61,7 +56,7 @@ function onMutations(mutations) {
     var added = mutations[i].addedNodes;
     for (var j = 0; j < added.length; j++) {
       var node = added[j];
-      if (node.nodeType !== 1) continue;   // 只处理元素节点
+      if (node.nodeType !== 1) continue;
       var els = collectCardEls(node);
       for (var k = 0; k < els.length; k++) handleCard(els[k]);
     }
@@ -70,7 +65,7 @@ function onMutations(mutations) {
 
 /**
  * 初次扫描页面“已存在”的卡片。
- * @returns {number} 已处理卡片数
+ * @returns {number}
  */
 function scanInitial() {
   var nodes = getCardNodes();

@@ -25,8 +25,11 @@
       "src/config/selectors.js",
       "src/utils/query.js",
       "src/utils/log.js",
+      "src/storage/storage.js",
+      "src/core/matcher.js",
       "src/core/cards.js",
       "src/core/block.js",
+      "src/ui/ui.js",
       "src/observer/observer.js",
       "src/network/interceptor.js",
       "src/main.js"
