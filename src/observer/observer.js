@@ -14,33 +14,50 @@
   });
   */
 
-  // MutationObserver 检测动态加载的新内容
+  // 增量观察：只处理“新插入”的卡片，不做全量重扫
+  const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
+  const seenCards = new WeakSet();
+
   const contentObserver = new MutationObserver((mutations) => {
-    let shouldCheck = false;
-    // 只要有新节点/元素添加就触发扫描（不做可见尺寸过滤）
+    const found = [];
     mutations.forEach((mutation) => {
-      if (mutation.addedNodes.length > 0) {
-        shouldCheck = true;
+      const addedNodes = mutation.addedNodes;
+      for (let i = 0; i < addedNodes.length; i++) {
+        const node = addedNodes[i];
+        if (node.nodeType !== 1) continue;   // 只处理元素
+        // 节点本身或祖先就是卡片
+        const self = node.closest ? node.closest(INCREMENTAL_CARD_SELECTOR) : null;
+        if (self) { found.push(self); continue; }
+        // 容器整体插入，内部可能含多张卡片
+        const inside = node.querySelectorAll ? node.querySelectorAll(INCREMENTAL_CARD_SELECTOR) : [];
+        for (let j = 0; j < inside.length; j++) found.push(inside[j]);
       }
     });
 
-    if (shouldCheck) {
-      // 使用setTimeout延迟扫描，避免短时间内多次触发
-
-      setTimeout(() => {
-        scanAndBlockVideoCards();
-        if (isCurrentPageMain()) {
-          blockMainPageAds(); // 主页广告屏蔽
-        }
-        if (isCurrentPageVideo()) {
-          blockVideoPageAds(); // 视频页广告屏蔽
-        }
-        if (!document.getElementById("bilibili-blacklist-manager-button")) {
-         // addBlacklistManagerButton(); // 确保管理按钮存在
-        }
-        
-      }, globalPluginConfig.blockScanInterval);
+    // 去重（弱引用，卡片移除后自动释放）
+    const fresh = [];
+    for (let k = 0; k < found.length; k++) {
+      const card = found[k];
+      if (seenCards.has(card)) continue;
+      seenCards.add(card);
+      fresh.push(card);
+      processCard(card);   // 加按钮、立即隐藏/遮挡、压入队列
     }
+
+    // 有新卡片才处理队列（队列内部串行+限速）
+    if (fresh.length > 0) {
+      if (videoCardProcessQueue.size > 0 && !isVideoCardQueueProcessing) {
+        processVideoCardQueue();
+      }
+      refreshBlockCountDisplay();
+      if (isCurrentPageMain()) fixMainPageLayout();
+    }
+
+    // 广告屏蔽（适度延迟合并，避免频繁）
+    setTimeout(() => {
+      if (isCurrentPageMain()) blockMainPageAds();
+      if (isCurrentPageVideo()) blockVideoPageAds();
+    }, globalPluginConfig.blockScanInterval);
   });
 
   /**

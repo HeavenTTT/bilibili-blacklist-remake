@@ -32,13 +32,13 @@
       return [];
     }
   }
-  // 增量更新 Tname list //24小时一次
+  // 增量更新 Tname list（60 秒一次）
   function updateTNameList() {
     if (tagNameList.length >= 1000) tagNameList = []; //防止过大时卡顿，清空重建
     if (tagNameList.length === 0) tagListLastTime = 0; //确保初始为空时进行更新
 
     const now = Date.now();
-    if (now - tagListLastTime < 6000) {
+    if (now - tagListLastTime < 60000) {
       console.log("[🫥BlackList] 标签名列表最近已更新，跳过本次更新。");
       return;
     }

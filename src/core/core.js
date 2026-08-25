@@ -243,7 +243,38 @@
   /**
    * 扫描并处理视频卡片进行屏蔽。
    */
-  function scanAndBlockVideoCards() {
+    /**
+   * 处理单张卡片：加「屏蔽」按钮、立即隐藏/遮挡、压入队列（后续走 API 判断）。
+   * @param {HTMLElement} card - 视频卡片元素。
+   */
+  function processCard(card) {
+    // 如果卡片已经处理过，则跳过
+    if (processedVideoCards.has(card)) {
+      return;
+    }
+    const { upName, videoTitle } = getVideoCardInfo(card);
+    // 如果获取到UP主名称和视频标题，则添加屏蔽按钮
+    if (upName && videoTitle) {
+      addBlockContainerToCard(upName, card);
+
+      // --- 根据 flagHideOnLoad 开关决定是否立即隐藏卡片 ---
+      const realCard = getRealVideoCardElement(card);
+      if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
+        // 只有在"显示全部"模式关闭时才执行
+        if (globalPluginConfig.flagKirby) {
+          addKirbyOverlayToCard(card); // 卡比模式下添加遮罩
+          realCard.style.display = "block"; // 确保卡片本身是显示的
+        } else {
+          realCard.style.display = "none"; // 非卡比模式下直接隐藏
+        }
+      }
+    }
+    // --- 立即隐藏卡片的逻辑结束 ---
+    // 将卡片添加到处理队列
+    videoCardProcessQueue.add(card);
+  }
+
+function scanAndBlockVideoCards() {
     const now = Date.now();
     // 限制扫描频率，防止性能问题
     if (
@@ -260,33 +291,7 @@
       const videoCards = queryAllVideoCards();
       if (!videoCards) return;
 
-      videoCards.forEach((card) => {
-        // 如果卡片已经处理过，则跳过
-        if (processedVideoCards.has(card)) {
-          return;
-        }
-        const { upName, videoTitle } = getVideoCardInfo(card);
-        // 如果获取到UP主名称和视频标题，则添加屏蔽按钮
-        if (upName && videoTitle) {
-          addBlockContainerToCard(upName, card);
-
-          // --- 根据 flagHideOnLoad 开关决定是否立即隐藏卡片 ---
-          const realCard = getRealVideoCardElement(card);
-          if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
-            // 只有在"显示全部"模式关闭时才执行
-            if (globalPluginConfig.flagKirby) {
-              addKirbyOverlayToCard(card); // 卡比模式下添加遮罩
-              realCard.style.display = "block"; // 确保卡片本身是显示的
-            } else {
-              realCard.style.display = "none"; // 非卡比模式下直接隐藏
-            }
-          }
-        }
-        // --- 立即隐藏卡片的逻辑结束 ---
-
-        // 将卡片添加到处理队列
-        videoCardProcessQueue.add(card);
-      });
+      videoCards.forEach(processCard);
 
       // 如果队列中有待处理的卡片且当前未在处理中，则开始处理队列
       if (videoCardProcessQueue.size > 0 && !isVideoCardQueueProcessing) {
