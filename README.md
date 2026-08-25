@@ -1,6 +1,6 @@
 # Bilibili-BlackList Remake
 
-> 从 `bilibili-blacklist` 完全重写而来的新分支工程：**沿用相同的 build / dev 工作流**，但项目结构、构建配置与开发脚本都更精细、更干净。源码按功能拆分为多个模块，当前用于观察 B 站视频卡片并提取 标题 / UP 名 / bvid。
+> 从 `bilibili-blacklist` 移植/重写而来的新分支工程：**沿用相同的 build / dev 工作流**，但项目结构、构建配置与开发脚本都更精细、更干净。现已完整移植旧版功能：黑名单匹配、卡片屏蔽、广告屏蔽、分类标签/竖屏判断、自动连播处理、管理面板等。
 
 ---
 
@@ -38,7 +38,7 @@ bilibili-blacklist-remake/
 │   ├── ui/
 │   │   └── ui.js                # 顶栏入口 + 管理面板 + 遮挡层 / 屏蔽按钮
 │   ├── observer/
-│   │   └── observer.js          # MutationObserver 动态扫描
+│   │   └── observer.js          # 增量 MutationObserver（只处理新增卡片）
 │   ├── pages/
 │   │   └── pages.js             # 分页初始化（主页 / 搜索 / 播放 / 分类 / 空间）
 │   ├── ads/
@@ -113,14 +113,14 @@ npm run dev
 - **自动连播处理**：播放页连播遇被屏蔽视频 → 切换 / 停止 / 不处理
 - **用户空间页**：UP 名旁「屏蔽 / 已屏蔽」按钮 + 删除线 + 灰度
 - **分页初始化**：主页 / 搜索页 / 播放页 / 分类页 / 用户空间页分别初始化
-- **管理面板**：精确匹配 / 正则匹配 / 插件配置，含「取消屏蔽 / 恢复屏蔽」、已屏蔽计数
-- **保留的优化**：视频页延迟 5 秒启用、队列串行限速（防 API 限流）、标签名列表缓存、主页屏蔽后布局修正
+- **管理面板**（四个标签页）：精确匹配(Up名字) / 正则匹配(Up/标题) / 屏蔽分类 / 插件配置，含「取消屏蔽 / 恢复屏蔽」、已屏蔽计数
+- **保留的优化**：视频页延迟 5 秒启用、队列串行限速 `200ms`（防 API 限流）、标签名列表缓存（60 秒更新一次）、主页屏蔽后布局修正
 
 控制台前缀统一为 `[🫥BlackList]`。
 
-### 插件配置（面板内）
+### 插件配置（面板内「插件配置」标签页）
 
-按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`flagKirby`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关。
+按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`flagKirby`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关，以及标签缓存清除、悬停延迟、扫描间隔、竖屏阈值等设置。
 
 ### 执行时机
 
