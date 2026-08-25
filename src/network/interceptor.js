@@ -1,20 +1,23 @@
 /*
  * 网络拦截模块（占位，默认不启用）
  * -----------------------------------------------------------
- * 目标：在“网络层”拦截 B 站页面的 Fetch / XHR 请求，用于后续读取或处理
- * 推荐/相关接口数据（例如 /x/web-interface/wbi/index/top/feed/rcmd）。
+ * 目标：在“网络层”拦截 B 站页面的 Fetch / XHR 请求，处理推荐/相关接口数据。
  *
- * 重要说明：
+ * 开关：
+ *   - NET_INTERCEPT.enabled：是否已安装代理；
+ *   - NET_INTERCEPT.rewrite ：是否命中后“改写响应”（删除黑名单条目）再交给页面。
+ *
+ * 说明：
  *   - 需要 patch 的是“页面上下文”的 window.fetch 与 XMLHttpRequest，
  *     因此使用 unsafeWindow（由加载器 @grant unsafeWindow 提供）。
- *   - 默认不启用：installNetworkInterceptors() 需手动调用，避免给页面上
- *     所有请求都包一层代理带来不必要的开销。
- *   - 只对 urlPatterns 命中的 URL 回调 onFetch / onXhr，其余请求零影响。
- *   - 干扰/改写响应体较复杂（需构造新的 Response / 处理 XHR responseText），
- *     建议先从“只读观察”开始，确认接口结构后再考虑改写。
+ *   - 默认不启用安装，避免给所有请求套一层代理带来开销。
+ *   - 只对 urlPatterns 命中的 URL 回调，其余请求零影响。
+ *   - Fetch 支持改写响应；XHR 的 responseText 只读、很难安全改写，
+ *     因此 XHR 暂作“只读观察”，改写建议优先走 Fetch。
  */
 var NET_INTERCEPT = {
   enabled: false,
+  rewrite: false,   // true=命中后删除黑名单条目再交给页面；false=只读观察
   // 后续填 B 站推荐 / 相关接口的关键字（命中才处理）
   urlPatterns: [
     // "/x/web-interface/wbi/index/top/feed/rcmd",
@@ -39,26 +42,38 @@ function netUrlMatches(url) {
 }
 
 /**
- * Fetch 命中后的回调（占位）。
+ * 处理 / 改写推荐接口响应文本（占位）。
+ * @param {string} url           请求 URL
+ * @param {string} responseText  原始响应文本
+ * @returns {string}             交给页面的响应文本（当前原样返回）
+ */
+function rewriteRecommendation(url, responseText) {
+  // TODO: 解析 JSON，删除黑名单条目（bvid / UP 名 / 标题匹配）后重新序列化
+  return responseText;
+}
+
+/**
+ * Fetch 命中后的回调（只读，用于观察 / 调试）。
  * @param {string} url           请求 URL
  * @param {string} responseText  响应文本
  */
 function onFetch(url, responseText) {
-  // TODO: 解析 / 拦截 B 站推荐接口数据
+  // TODO: 观察 / 记录推荐接口数据结构
 }
 
 /**
- * XHR 命中后的回调（占位）。
+ * XHR 命中后的回调（只读，用于观察 / 调试）。
  * @param {string} url           请求 URL
  * @param {string} responseText  响应文本
  */
 function onXhr(url, responseText) {
-  // TODO: 解析 / 拦截 B 站推荐接口数据
+  // TODO: 观察 / 记录推荐接口数据结构
 }
 
 /**
  * 安装网络拦截器（作用于页面上下文）。
- * 只会执行一次；命中 urlPatterns 时才触发 onFetch / onXhr。
+ * 只会执行一次；命中 urlPatterns 时才触发 onFetch / onXhr；
+ * 若 NET_INTERCEPT.rewrite=true，Fetch 会用改写后的响应替换原始响应。
  */
 function installNetworkInterceptors() {
   if (NET_INTERCEPT.enabled) return;
@@ -66,7 +81,7 @@ function installNetworkInterceptors() {
   if (!page || typeof page.fetch !== "function") return;
   NET_INTERCEPT.enabled = true;
 
-  // ---- Fetch 拦截 ----
+  // ---- Fetch 拦截（支持改写）----
   var originFetch = page.fetch.bind(page);
   page.fetch = function (input, init) {
     var url = "";
@@ -78,16 +93,22 @@ function installNetworkInterceptors() {
       url = init.url;
     }
     return originFetch(input, init).then(function (res) {
-      if (url && netUrlMatches(url)) {
-        res.clone().text().then(function (text) {
-          onFetch(url, text);
+      if (!url || !netUrlMatches(url)) return res;
+      return res.clone().text().then(function (text) {
+        onFetch(url, text);
+        if (!NET_INTERCEPT.rewrite) return res;
+        var rewritten = rewriteRecommendation(url, text);
+        if (rewritten === text) return res;
+        return new Response(rewritten, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers
         });
-      }
-      return res;
+      });
     });
   };
 
-  // ---- XHR 拦截 ----
+  // ---- XHR 拦截（只读观察，改写较难，暂不覆盖 responseText）----
   var X = page.XMLHttpRequest;
   if (X && X.prototype) {
     var originOpen = X.prototype.open;

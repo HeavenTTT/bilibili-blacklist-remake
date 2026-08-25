@@ -5,7 +5,7 @@
  *   1. 等 DOM 就绪 + B 站初始数据就绪；
  *   2. 初次扫描页面已有的卡片；
  *   3. 开启 MutationObserver 增量监听；
- *   4. 暴露网络拦截器的安装入口（默认不启用）。
+ *   4. 暴露 屏蔽配置 + 网络拦截器（默认不启用）。
  */
 
 /**
@@ -42,7 +42,7 @@ function whenBiliDataReady(callback, timeoutMs) {
   check();
 }
 
-// 启动：初次扫描已有卡片 -> 开启增量监听 -> 暴露调试/网络入口
+// 启动：初次扫描已有卡片 -> 开启增量监听 -> 暴露调试 / 配置入口
 whenDomReady(function () {
   whenBiliDataReady(function () {
     var processed = scanInitial();
@@ -51,7 +51,9 @@ whenDomReady(function () {
 
     // 调试统计
     window.__blacklistStats = STATS;
-    // 网络拦截器：默认不启用，后续需要时手动调用：
+    // 屏蔽配置（mode: cover | hide，addControls 等）
+    window.__blacklistConfig = BLOCK_CONFIG;
+    // 网络拦截器：默认不启用，后续需要时手动调用 install() 并配置 config
     window.__blacklistInterceptors = {
       install: installNetworkInterceptors,
       config: NET_INTERCEPT

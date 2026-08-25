@@ -11,6 +11,8 @@
   - 调试统计改为 `window.__blacklistStats = { processed, blocked }`
 - 新增网络拦截模块 `src/network/interceptor.js`：拦截 Fetch / XHR（基于 `unsafeWindow`），按 URL 过滤，默认不启用，后续可 `window.__blacklistInterceptors.install()` 开启
 - `@grant` 增加 `unsafeWindow`
+- 屏蔽接口细化到“覆盖/隐藏”（`BLOCK_CONFIG.mode`）与「屏蔽 / 屏蔽原因」按钮占位（`applyCover` / `applyHide` / `addBlockControls` 等）
+- 网络拦截增加 `NET_INTERCEPT.rewrite` 开关：`true` 时 Fetch 命中接口会用 `rewriteRecommendation()` 改写响应后再交给页面（当前改写入口为空实现，返回原文）
 
 ## [0.4.0] - 重命名为 Remake
 
