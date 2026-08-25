@@ -189,6 +189,7 @@ function refreshRegexMatchList() {
     const item = createBlacklistListItem(regex, () => {
       regexMatchBlacklist.splice(index, 1);
       saveBlacklistsToStorage();
+      invalidateRegexCache();
       refreshRegexMatchList();
     });
     regexMatchListElement.appendChild(item);
@@ -676,7 +677,7 @@ function createBlacklistPanel() {
 
   const regexInput = document.createElement("input");
   regexInput.type = "text";
-  regexInput.placeholder = "输入正则表达式 (如: 小小.*Official)";
+  regexInput.placeholder = "正则表达式，支持 /pattern/flags（如: /小小.*Official/i）";
 
   const addRegexBtn = document.createElement("button");
   addRegexBtn.className = "bilibili-blacklist-primary-btn";
@@ -684,15 +685,15 @@ function createBlacklistPanel() {
   addRegexBtn.addEventListener("click", () => {
     const regex = regexInput.value.trim();
     if (regex && !regexMatchBlacklist.includes(regex)) {
-      try {
-        new RegExp(regex); // 验证正则表达式
-        regexMatchBlacklist.push(regex);
-        saveBlacklistsToStorage();
-        regexInput.value = "";
-        refreshRegexMatchList();
-      } catch (e) {
-        alert("无效的正则表达式: " + e.message);
+      if (!compileRegex(regex)) {
+        alert("无效的正则表达式（支持 /pattern/flags）");
+        return;
       }
+      regexMatchBlacklist.push(regex);
+      saveBlacklistsToStorage();
+      invalidateRegexCache();
+      regexInput.value = "";
+      refreshRegexMatchList();
     }
   });
   addRegexContainer.appendChild(regexInput);

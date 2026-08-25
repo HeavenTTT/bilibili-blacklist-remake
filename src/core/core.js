@@ -411,17 +411,24 @@ function isBlacklisted(upName, title) {
     return true;
   }
 
-  // 检查正则匹配黑名单
-  const regexList = regexMatchBlacklist.map(
-    (regex) => new RegExp(regex, "i")
-  );
-  if (regexList.some((regex) => regex.test(upName))) {
-    return true;
-  }
-  if (regexList.some((regex) => regex.test(title))) {
-    return true;
+  // 检查正则匹配黑名单（支持 /pattern/flags，默认 i；无效正则自动跳过）
+  for (let i = 0; i < regexMatchBlacklist.length; i++) {
+    const re = compileRegex(regexMatchBlacklist[i]);
+    if (!re) continue;
+    if (testRegex(re, upName) || testRegex(re, title)) return true;
   }
   return false;
+}
+
+/**
+ * 用编译后的正则测试文本；先重置 lastIndex，避免 g/y 状态残留。
+ * @param {RegExp} re
+ * @param {string} text
+ * @returns {boolean}
+ */
+function testRegex(re, text) {
+  re.lastIndex = 0;
+  return re.test(text);
 }
 
 /**

@@ -98,3 +98,56 @@ function getTagNameByV2(name_v2) {
   const entry = tagNameList.find(entry => entry.name_v2 == name_v2); // 使用宽松相等以匹配类型
   return entry ? entry.name: null;
 }
+// ============ 正则表达式工具（支持 /pattern/flags，默认 i） ============
+const REGEX_FLAGS_ALLOWED = "dgimsuvy";
+const regexCache = new Map();   // 原始串 -> RegExp | null（无效）
+
+/**
+ * 解析一条用户输入的正则：支持 /pattern/flags 与纯 pattern 两种写法。
+ * @param {string} entry
+ * @returns {{pattern: string, flags: string}|null}
+ */
+function parseRegexEntry(entry) {
+  entry = String(entry == null ? "" : entry).trim();
+  if (!entry) return null;
+  // 形如 /pattern/flags
+  if (entry.charAt(0) === "/") {
+    const lastSlash = entry.lastIndexOf("/");
+    if (lastSlash <= 0) return null;
+    const pattern = entry.slice(1, lastSlash);
+    let flags = entry.slice(lastSlash + 1).trim();
+    if (flags.length === 0) flags = "i";
+    for (let i = 0; i < flags.length; i++) {
+      if (REGEX_FLAGS_ALLOWED.indexOf(flags.charAt(i)) === -1) return null;
+    }
+    return { pattern: pattern, flags: flags };
+  }
+  // 纯 pattern：默认忽略大小写
+  return { pattern: entry, flags: "i" };
+}
+
+/**
+ * 编译并缓存一条正则；无效返回 null（并给出警告）。
+ * @param {string} entry
+ * @returns {RegExp|null}
+ */
+function compileRegex(entry) {
+  if (regexCache.has(entry)) return regexCache.get(entry);
+  let re = null;
+  const parsed = parseRegexEntry(entry);
+  if (parsed) {
+    try {
+      re = new RegExp(parsed.pattern, parsed.flags);
+    } catch (e) {
+      console.warn("[🫥BlackList] 无效正则表达式，已跳过:", entry, e.message);
+      re = null;
+    }
+  }
+  regexCache.set(entry, re);
+  return re;
+}
+
+/** 清空正则编译缓存（黑名单变化后调用） */
+function invalidateRegexCache() {
+  regexCache.clear();
+}
