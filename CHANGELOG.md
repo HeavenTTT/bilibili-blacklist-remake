@@ -1,5 +1,20 @@
 # 更新记录 (Changelog)
 
+## [0.7.0] - 完整移植旧版插件功能
+
+### 功能（按你确认的取舍）
+- 广告屏蔽(`flagAD`)、分类标签屏蔽(`flagTName`，view 接口)、cm软广(`flagCM`)、竖屏屏蔽(`flagVertical`)
+- 悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`)、用户空间页屏蔽按钮
+- 按旧版“分页各自初始化”（主页 / 搜索 / 播放 / 分类 / 用户空间）
+- 保留优化：视频页延迟 5 秒、队列串行限速、标签名列表缓存、主页屏蔽后布局修正
+- 默认黑名单采用旧版列表
+- 移除（未选）：视频页每 2.5 秒补扫、页面不可见暂停、只扫描有尺寸的新节点
+
+### 结构调整
+- 移植旧版 `storage / core / video-data / ui / pages / ads / observer / autoplay / utils` 模块
+- 保留 `network/interceptor.js`（网络拦截占位，默认不启用）
+- 控制台前缀统一为 `[🫥BlackList]`
+
 ## [0.6.0] - 实现屏蔽与插件界面（参考旧版）
 
 ### 功能

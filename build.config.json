@@ -22,15 +22,15 @@
     "outputDir": "dist",
     "outputBase": "bilibili-blacklist-remake.user.js",
     "modules": [
-      "src/config/selectors.js",
-      "src/utils/query.js",
-      "src/utils/log.js",
       "src/storage/storage.js",
-      "src/core/matcher.js",
-      "src/core/cards.js",
-      "src/core/block.js",
+      "src/utils/utils.js",
+      "src/core/core.js",
+      "src/core/video-data.js",
       "src/ui/ui.js",
       "src/observer/observer.js",
+      "src/pages/pages.js",
+      "src/ads/ads.js",
+      "src/autoplay/autoplay.js",
       "src/network/interceptor.js",
       "src/main.js"
     ]

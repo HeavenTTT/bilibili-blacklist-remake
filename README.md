@@ -28,24 +28,26 @@ bilibili-blacklist-remake/
 ├── .gitignore                   # 忽略 dist、node_modules 等
 ├── .gitattributes               # 统一 LF
 ├── src/
-│   ├── config/
-│   │   └── selectors.js         # 所有 CSS 选择器（数组，便于修改）
-│   ├── utils/
-│   │   ├── query.js             # 查询工具（queryFirst / queryFirstText）
-│   │   └── log.js               # 控制台日志输出
-│   ├── core/
-│   │   ├── cards.js             # 卡片查找与字段提取（extractCard，不含 el）
-│   │   ├── matcher.js           # 黑名单匹配（精确 / 正则）
-│   │   └── block.js             # 校验 + 屏蔽（遮挡 / 隐藏、屏蔽按钮）
 │   ├── storage/
 │   │   └── storage.js           # 黑名单 + 配置（GM 存储）
+│   ├── utils/
+│   │   └── utils.js             # 标签名列表更新等工具
+│   ├── core/
+│   │   ├── core.js              # 卡片查找 / 屏蔽 / 黑名单增删 / 主页布局修正
+│   │   └── video-data.js        # 队列处理 + 分类标签 / 竖屏 API 判断
 │   ├── ui/
-│   │   └── ui.js                # 顶栏入口 + 管理面板
+│   │   └── ui.js                # 顶栏入口 + 管理面板 + 遮挡层 / 屏蔽按钮
 │   ├── observer/
-│   │   └── observer.js          # 增量 MutationObserver（只处理新增卡片）
+│   │   └── observer.js          # MutationObserver 动态扫描
+│   ├── pages/
+│   │   └── pages.js             # 分页初始化（主页 / 搜索 / 播放 / 分类 / 空间）
+│   ├── ads/
+│   │   └── ads.js               # 广告屏蔽
+│   ├── autoplay/
+│   │   └── autoplay.js          # 自动连播处理
 │   ├── network/
 │   │   └── interceptor.js       # Fetch / XHR 拦截（占位，默认不启用）
-│   └── main.js                  # 主入口：初始化界面 + 初次扫描 + 增量监听
+│   └── main.js                  # 主入口：暴露调试 / 网络入口
 ├── scripts/
 │   └── dev.js                   # 一键开发脚本
 └── test/
@@ -99,45 +101,30 @@ npm run dev
 
 ## 🧪 当前功能
 
-打开 B 站页面后，脚本会：
+已按你的选择完整移植旧版 Bilibili-BlackList：
 
-- 在卡片**悬停时显示「屏蔽」按钮**，点击把该 UP 主加入精确黑名单并立即屏蔽；
-- 命中黑名单（**精确匹配 UP 主名** / **正则匹配 UP 名或标题**）的卡片，会被 **遮挡模糊层** 或 **直接隐藏**（可在插件配置切换）；
-- 顶栏右侧（或右上角兜底）出现**卡比入口 + 已屏蔽计数**，点击打开管理面板：
-  - **精确匹配(UP名)**：添加 / 移除 UP 主名；
-  - **正则匹配(UP/标题)**：添加 / 移除正则规则；
-  - **插件配置**：开关「按 UP/标题屏蔽」「遮挡模式」，以及「取消屏蔽 / 恢复屏蔽」。
+- **黑名单**：精确匹配 UP 主名 + 正则匹配（UP/标题），GM 持久化（默认保留旧版列表）
+- **卡片屏蔽**：命中黑名单 → 遮挡模糊层（卡比）或直接隐藏；卡片悬停显示「屏蔽」按钮
+- **广告屏蔽**：主页 / 播放页推广、直播、游戏 / 活动等广告
+- **分类标签屏蔽**：调 `view` 接口按分类标签名屏蔽（带标签按钮，点击可加黑名单）
+- **cm 软广**：屏蔽 `cm.bilibili.com` 链接
+- **竖屏屏蔽**：按 API 分辨率判断竖屏
+- **悬停临时显示**：遮挡卡片悬停指定秒后临时显示
+- **自动连播处理**：播放页连播遇被屏蔽视频 → 切换 / 停止 / 不处理
+- **用户空间页**：UP 名旁「屏蔽 / 已屏蔽」按钮 + 删除线 + 灰度
+- **分页初始化**：主页 / 搜索页 / 播放页 / 分类页 / 用户空间页分别初始化
+- **管理面板**：精确匹配 / 正则匹配 / 插件配置，含「取消屏蔽 / 恢复屏蔽」、已屏蔽计数
+- **保留的优化**：视频页延迟 5 秒启用、队列串行限速（防 API 限流）、标签名列表缓存、主页屏蔽后布局修正
 
-控制台仍会打印每张卡片的信息：
+控制台前缀统一为 `[🫥BlackList]`。
 
-```
-[🫥BlackList] 视频卡片 - <视频标题>
-title : <视频标题>
-up    : <UP 主名字>
-bvid  : <BV 号>
-```
+### 插件配置（面板内）
 
-- 初次扫描页面已有的卡片；
-- 之后通过 `MutationObserver` **增量监听**：只在“新卡片插入时”即时 提取 → 校验 → 屏蔽，**不做全量重扫**；
-- 用 `WeakSet` 记录已处理卡片（弱引用），卡片被移除后随 GC 释放，**不保存 el，也不累积数组**；
-- 调试统计：`window.__blacklistStats = { processed, blocked }`；
-- 网络拦截器（Fetch / XHR）已预留，默认不启用：后续用 `window.__blacklistInterceptors.install()` 开启。
+按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`flagKirby`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关。
 
-### 选择器管理（易改）
+### 执行时机
 
-所有 CSS 选择器都集中在 `src/config/selectors.js` 的 `SELECTORS` 数组里（卡片根 / 标题 / UP 名 / bvid 链接），
-B 站改版时只需增删数组项即可，不用到处改代码。
-
-### 执行时机（重要）
-
-脚本不会在页面加载一开始就抢跑，而是做了两层“就绪”保护：
-
-1. **`@run-at document-idle`**：由 `build.config.json` 控制，让脚本在页面解析完成后才注入；
-2. **`src/main.js` 内的兜底等待**：等待 `DOMContentLoaded`，再等待 B 站初始数据 `window.__INITIAL_STATE__`（其中含 `related` / `availableVideoList` 等数组）就绪，带 3 秒超时兜底，避免无限等待。
-
-这样真正接入业务逻辑时，不会因为“跑得比网页数据加载还早”而读不到 DOM 或数据。
-
----
+`@run-at document-idle` + 页面就绪保护（旧版逻辑，按页初始化）。
 
 ## 📋 更新记录
 

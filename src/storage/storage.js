@@ -1,80 +1,95 @@
-/*
- * 存储模块
- * -----------------------------------------------------------
- * 黑名单与全局配置的加载 / 保存（基于 GM_getValue / GM_setValue）。
- */
-var STORAGE_KEYS = {
-  exact: "exactBlacklist",
-  regex: "regexBlacklist",
-  config: "globalConfig"
-};
+// 从存储中获取黑名单
+  // 默认精确匹配黑名单（区分大小写）
+  let exactMatchBlacklist = GM_getValue("exactBlacklist", [
+    "绝区零",
+    "崩坏星穹铁道",
+    "崩坏3",
+    "原神",
+    "米哈游miHoYo",
+  ]);
+  // 默认正则匹配黑名单（不区分大小写）
+  let regexMatchBlacklist = GM_getValue("regexBlacklist", [
+    "王者荣耀",
+    "和平精英",
+    "PUBG",
+    "绝地求生",
+    "吃鸡",
+  ]);
+  // 默认标签名黑名单
+  let tagNameBlacklist = GM_getValue("tNameBlacklist", []);
 
-// 精确匹配黑名单（UP 主名）
-var exactMatchBlacklist = GM_getValue(STORAGE_KEYS.exact, []);
-// 正则匹配黑名单（UP 主名 / 标题）
-var regexMatchBlacklist = GM_getValue(STORAGE_KEYS.regex, []);
-// 全局配置
-var globalConfig = Object.assign({
-  flagInfo: true,       // 按 UP 主名 / 标题屏蔽
-  flagKirby: true,      // 是否使用“遮挡覆盖层”而非直接隐藏
-  flagHideOnLoad: true, // 加载后立即屏蔽
-  blockScanInterval: 200
-}, GM_getValue(STORAGE_KEYS.config, {}));
+  // 从存储中获取全局配置，并为旧版本配置补充新增字段
+  const defaultGlobalPluginConfig = {
+    flagInfo: true, // 启用/禁用按UP主名/标题屏蔽
+    flagAD: true, // 启用/禁用屏蔽一般广告
+    flagTName: true, // 启用/禁用按标签名屏蔽（需要API调用）
+    flagCM: true, // 启用/禁用屏蔽cm.bilibili.com软广
+    flagKirby: true, // 启用/禁用被屏蔽视频的卡比覆盖模式
+    flagHoverReveal: false, // 启用/禁用悬停后临时显示被遮挡视频
+    hoverRevealDelaySeconds: 1, // 悬停显示延迟（秒）
+    processQueueInterval: 200, // 处理队列中单个卡片的延迟时间（毫秒）
+    blockScanInterval: 200, // BlockCard扫描新卡片的间隔时间（毫秒）
+    flagHideOnLoad: true, // 启用/禁用页面加载时自动隐藏
+    flagVertical: true, // 启用/禁用屏蔽竖屏视频
+    verticalScaleThreshold: 0.7, // 竖屏视频的宽高比阈值（0-1）
+    // 自动连播遇到被屏蔽视频时的处理方式（三态）：
+    //  "skip" = 切换到未屏蔽视频；"stop" = 停止播放；"off" = 不处理（B站默认行为，继续播放被屏蔽视频）
+    flagSkipBlockedAutoplay: "off",
+  };
+  let globalPluginConfig = {
+    ...defaultGlobalPluginConfig,
+    ...(GM_getValue("globalConfig", {}) || {}),
+  };
 
-/** 把黑名单写入存储 */
-function saveBlacklists() {
-  GM_setValue(STORAGE_KEYS.exact, exactMatchBlacklist);
-  GM_setValue(STORAGE_KEYS.regex, regexMatchBlacklist);
-}
+  // 防止旧配置或手动修改写入超出允许范围的悬停延迟
+  const storedHoverRevealDelay = Number(
+    globalPluginConfig.hoverRevealDelaySeconds
+  );
+  globalPluginConfig.hoverRevealDelaySeconds = Number.isFinite(
+    storedHoverRevealDelay
+  )
+    ? Math.min(5, Math.max(0.1, storedHoverRevealDelay))
+    : defaultGlobalPluginConfig.hoverRevealDelaySeconds;
 
-/** 把全局配置写入存储 */
-function saveGlobalConfig() {
-  GM_setValue(STORAGE_KEYS.config, globalConfig);
-}
-
-/** 添加一条精确匹配项（最新在前），成功返回 true */
-function addExactBlacklistItem(item) {
-  item = String(item == null ? "" : item).trim();
-  if (!item) return false;
-  if (exactMatchBlacklist.indexOf(item) === -1) {
-    exactMatchBlacklist.unshift(item);
-    saveBlacklists();
-    return true;
+  // 校验/修复自动连播处理方式，只允许 "skip" / "stop" / "off"
+  const AUTOPLAY_SKIP_MODES = ["skip", "stop", "off"];
+  if (!AUTOPLAY_SKIP_MODES.includes(globalPluginConfig.flagSkipBlockedAutoplay)) {
+    globalPluginConfig.flagSkipBlockedAutoplay =
+      defaultGlobalPluginConfig.flagSkipBlockedAutoplay;
   }
-  return false;
-}
 
-/** 移除一条精确匹配项，成功返回 true */
-function removeExactBlacklistItem(item) {
-  var idx = exactMatchBlacklist.indexOf(item);
-  if (idx !== -1) {
-    exactMatchBlacklist.splice(idx, 1);
-    saveBlacklists();
-    return true;
+  // 将黑名单保存到存储中
+  function saveBlacklistsToStorage() {
+    GM_setValue("exactBlacklist", exactMatchBlacklist);
+    GM_setValue("regexBlacklist", regexMatchBlacklist);
+    GM_setValue("tNameBlacklist", tagNameBlacklist);
   }
-  return false;
-}
 
-/** 添加一条正则匹配项（校验正则合法性），成功返回 true */
-function addRegexBlacklistItem(regex) {
-  regex = String(regex == null ? "" : regex).trim();
-  if (!regex) return false;
-  try { new RegExp(regex); } catch (e) { return false; }
-  if (regexMatchBlacklist.indexOf(regex) === -1) {
-    regexMatchBlacklist.unshift(regex);
-    saveBlacklists();
-    return true;
+  // 将全局配置保存到存储中
+  function saveGlobalConfigToStorage() {
+    GM_setValue("globalConfig", globalPluginConfig);
   }
-  return false;
-}
 
-/** 移除一条正则匹配项，成功返回 true */
-function removeRegexBlacklistItem(regex) {
-  var idx = regexMatchBlacklist.indexOf(regex);
-  if (idx !== -1) {
-    regexMatchBlacklist.splice(idx, 1);
-    saveBlacklists();
-    return true;
+  // 标签名列表：存储ID到名称的映射
+  let tagNameList = GM_getValue("tagNameList", []); // 默认为空数组，每个条目为 { id, name , name_v2}
+  let tagListLastTime = GM_getValue("tLastTime", 0);
+  // 将标签名列表保存到存储中
+  function saveTagNameListToStorage() {
+    GM_setValue("tagNameList", tagNameList);
+    GM_setValue("tLastTime", Date.now());
   }
-  return false;
-}
+
+  // 根据ID查找标签名
+  function getTagNameById(id) {
+    if (id === null || id === undefined) return null;
+    // 支持字符串或数字ID
+    const entry = tagNameList.find(entry => entry.id == id); // 使用宽松相等以匹配类型
+    return entry ? { name: entry.name, name_v2: entry.name_v2 } : null;
+  }
+  // 根据name_v2查找标签名
+  function getTagNameByV2(name_v2) {
+    if (name_v2 === null || name_v2 === undefined) return null;
+    // 支持字符串或数字ID
+    const entry = tagNameList.find(entry => entry.name_v2 == name_v2); // 使用宽松相等以匹配类型
+    return entry ? entry.name: null;
+  }
