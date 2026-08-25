@@ -1,3 +1,8 @@
+/*
+ * 页面模块
+ * -----------------------------------------------------------
+ * 按页面类型初始化并在 DOM 就绪后启动脚本。
+ */
 /**
    * 根据当前页面初始化脚本。
    */
@@ -34,9 +39,7 @@
     console.log("[🫥BlackList] 脚本已加载🥔");
     
   }
-  let isfirstLoad = true;
-  let rescanVideoPageTimer = null; // 视频页定时补充扫描定时器
-  // 监听DOMContentLoaded并检查readyState以进行早期初始化
+  let isfirstLoad = true;// 监听DOMContentLoaded并检查readyState以进行早期初始化
   // initializeScript 内部已通过 isfirstLoad 保证只执行一次
   document.addEventListener("DOMContentLoaded", initializeScript);
   if (document.readyState === "complete" && isfirstLoad) {
@@ -87,7 +90,7 @@
    * 初始化视频播放页特有的功能。
    */
   function initializeVideoPage() {
-    // **用户修改 2: 延迟 5 秒启动屏蔽功能**
+    // 视频页延迟 5 秒启动功能
     console.log("[🫥BlackList] 播放页已加载，将延迟 5 秒启动功能。🍇");
     const flag = globalPluginConfig.flagSkipBlockedAutoplay;
     globalPluginConfig.flagSkipBlockedAutoplay = "off";

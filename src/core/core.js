@@ -1,5 +1,9 @@
-// UI元素（稍后初始化）
-  let tempUnblockButton;
+/*
+ * 核心模块
+ * -----------------------------------------------------------
+ * 卡片查找 / 屏蔽 / 黑名单增删 / 主页布局修正。
+ */
+let tempUnblockButton;
   let managerPanel;
   let exactMatchListElement;
   let regexMatchListElement;
@@ -16,7 +20,6 @@
   let processedVideoCards = new WeakSet(); // 记录已处理过的卡片(避免重复处理，包括 UP主/标题检查和 tname 获取)
   let videoCardProcessQueue = new Set(); // 存储待处理的卡片，用于统一的队列处理
   let isVideoCardQueueProcessing = false; // 是否正在处理队列
-  let isPageCurrentlyActive = true; // 页面是否可见
   let countBlockInfo = 0; // 已屏蔽视频计数
   let countBlockAD = 0; // 已屏蔽广告计数
   let countBlockTName = 0; // 已屏蔽标签名计数
@@ -398,6 +401,8 @@ function scanAndBlockVideoCards() {
    * @returns {boolean} 如果在黑名单中则返回true，否则返回false。
    */
   function isBlacklisted(upName, title) {
+    upName = upName || "";
+    title = title || "";
     const lowerCaseUpName = upName.toLowerCase();
     // 检查精确匹配黑名单
     if (

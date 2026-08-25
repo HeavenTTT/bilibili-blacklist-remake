@@ -1,18 +1,9 @@
+/*
+ * 观察器模块
+ * -----------------------------------------------------------
+ * 增量 MutationObserver：只处理新插入的卡片，避免全量重扫。
+ */
   // (未启用) 页面可见性暂停处理已被移除
-
-  // 监听窗口焦点获取 (用户请求停用)
-  /*
-  window.addEventListener("focus", () => {
-    isPageCurrentlyActive = true;
-  });
-  */
-
-  // 监听窗口焦点失去 (用户请求停用)
-  /*
-  window.addEventListener("blur", () => {
-    isPageCurrentlyActive = false;
-  });
-  */
 
   // 增量观察：只处理“新插入”的卡片，不做全量重扫
   const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";

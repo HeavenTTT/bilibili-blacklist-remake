@@ -1,3 +1,8 @@
+/*
+ * 存储模块
+ * -----------------------------------------------------------
+ * 黑名单与全局配置的加载 / 保存（基于 GM_getValue / GM_setValue）。
+ */
 // 从存储中获取黑名单
   // 默认精确匹配黑名单（区分大小写）
   let exactMatchBlacklist = GM_getValue("exactBlacklist", [

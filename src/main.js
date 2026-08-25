@@ -5,7 +5,7 @@
  * 本文件只负责：在 DOM 就绪后暴露调试 / 网络拦截入口。
  */
 document.addEventListener("DOMContentLoaded", function () {
-  window.__blacklistConfig = globalConfig;
+  window.__blacklistConfig = globalPluginConfig;
   window.__blacklistInterceptors = {
     install: installNetworkInterceptors,
     config: NET_INTERCEPT

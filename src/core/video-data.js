@@ -1,3 +1,8 @@
+/*
+ * 视频数据模块
+ * -----------------------------------------------------------
+ * 队列串行处理，以及分类标签 / 竖屏的 API 判断。
+ */
 /**
    * 获取视频卡片的链接。
    * @param {HTMLElement} cardElement - 视频卡片元素。
@@ -96,11 +101,6 @@
     isVideoCardQueueProcessing = true;
 
     while (videoCardProcessQueue.size > 0) {
-      // 如果页面不可见，则暂停处理
-      if (!isPageCurrentlyActive) {
-        await sleep(1000);
-        continue;
-      }
 
       const iterator = videoCardProcessQueue.values();
       const card = iterator.next().value;
@@ -171,7 +171,7 @@
                 tnameGroup.appendChild(tnameElement);
                 hasTname = true;
               }
-              //#region 临时修复，仅ID
+              // 临时修复：仅用 tid_v2 查本地标签名
               if (data.tid_v2) {
                 const obj = getTagNameById(data.tid_v2);
                 if (obj) {
@@ -188,7 +188,7 @@
                   hasTname = true;
                 }
               }
-              //#endregion
+              // 临时修复结束
               if (hasTname) {
                 container.appendChild(tnameGroup);
               }

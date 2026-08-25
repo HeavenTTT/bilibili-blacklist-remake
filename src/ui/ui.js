@@ -1,3 +1,8 @@
+/*
+ * 界面模块
+ * -----------------------------------------------------------
+ * 顶栏入口 + 管理面板 + 遮挡层 / 屏蔽按钮 / 悬停临时显示。
+ */
 const KIRBY_FADE_DURATION_MS = 800;
   const hoverRevealBoundCards = new WeakSet();
   const hoverRevealTimers = new WeakMap();

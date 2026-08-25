@@ -1,5 +1,14 @@
 # 更新记录 (Changelog)
 
+## [0.7.2] - 代码规整
+
+### 变更
+- 修复 `main.js` 引用未定义 `globalConfig`（应为 `globalPluginConfig`）的隐患
+- 移除未使用的 `rescanVideoPageTimer`、`isPageCurrentlyActive`（含其 `visibilitychange`/`focus`/`blur` 关联注释）
+- 移除队列中“页面不可见即暂停”的判断（按你的选择不保留）
+- 为各模块补充文件头职责注释；清理临时修复、`#region`、`用户修改 2` 等开发注释
+- `isBlacklisted` 增加 `upName`/`title` 空值兜底
+
 ## [0.7.1] - 按你确认调整
 
 ### 变更
