@@ -729,6 +729,10 @@ function createBlacklistPanel() {
   managerPanel.appendChild(contentContainer);
 
   document.body.appendChild(managerPanel);
+
+  // 首次创建后立即刷新计数标题，避免第一次打开面板时标题为空
+  refreshBlockCountDisplay();
+
   return managerPanel;
 }
 
