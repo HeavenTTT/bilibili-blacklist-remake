@@ -1,8 +1,11 @@
 /*
  * 视频卡片核心模块
  * -----------------------------------------------------------
- * 负责：查找页面上的视频卡片、提取 bvid / 标题 / UP 主名字，
- * 并返回包含卡片本体 el 的信息，便于后续改卡片、加按钮等。
+ * 负责：查找页面上的视频卡片节点、从单个卡片中提取轻量信息
+ * （bvid / 标题 / UP 主名字）。
+ *
+ * 注意：不再把 el 存进数组 —— 卡片只需要在“处理当下”操作一次，
+ * 之后靠 WeakSet 去重；卡片被移除后引用随 GC 释放，不会无限累积。
  */
 
 /**
@@ -60,22 +63,14 @@ function getUpName(el) {
 }
 
 /**
- * 收集页面上全部视频卡片信息。
- * 返回数组每一项：{ title, up, bvid, el }，其中 el 为卡片 DOM 本体，
- * 方便后续直接改卡片、注入按钮等。
- * @returns {Array<{title: string, up: string, bvid: string, el: HTMLElement}>}
+ * 从一张卡片节点中提取“轻量”信息，不持有 el 引用。
+ * @param {HTMLElement} el  卡片节点
+ * @returns {{bvid: string, title: string, up: string}}
  */
-function collectCards() {
-  var cards = getCardNodes().map(function (el) {
-    return {
-      bvid: getBvid(el),
-      title: getTitle(el),
-      up: getUpName(el),
-      el: el   // 卡片本体，供后续改卡片 / 添加按钮
-    };
-  });
-  // 只保留真正的视频卡片：必须解析到 bvid
-  return cards.filter(function (c) {
-    return !!c.bvid;
-  });
+function extractCard(el) {
+  return {
+    bvid: getBvid(el),
+    title: getTitle(el),
+    up: getUpName(el)
+  };
 }

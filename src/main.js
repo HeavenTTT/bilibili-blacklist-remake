@@ -1,8 +1,11 @@
 /*
  * 主入口模块
  * -----------------------------------------------------------
- * 负责启动：等 DOM 就绪 + B 站初始数据就绪后，
- * 执行初次扫描并开启新增卡片观察。
+ * 负责启动：
+ *   1. 等 DOM 就绪 + B 站初始数据就绪；
+ *   2. 初次扫描页面已有的卡片；
+ *   3. 开启 MutationObserver 增量监听；
+ *   4. 暴露网络拦截器的安装入口（默认不启用）。
  */
 
 /**
@@ -39,12 +42,19 @@ function whenBiliDataReady(callback, timeoutMs) {
   check();
 }
 
-// 启动：就绪后扫描一次，并把结果暴露到控制台，再开启观察
+// 启动：初次扫描已有卡片 -> 开启增量监听 -> 暴露调试/网络入口
 whenDomReady(function () {
   whenBiliDataReady(function () {
-    var cards = scan();
-    window.__blacklistCards = cards;   // 每项含 { title, up, bvid, el }
-    console.log("[🫥BlackList] 初次扫描共观察到 " + cards.length + " 个视频卡片");
+    var processed = scanInitial();
+    console.log("[🫥BlackList] 初次扫描共观察到 " + processed + " 个视频卡片");
     observeCards();
+
+    // 调试统计
+    window.__blacklistStats = STATS;
+    // 网络拦截器：默认不启用，后续需要时手动调用：
+    window.__blacklistInterceptors = {
+      install: installNetworkInterceptors,
+      config: NET_INTERCEPT
+    };
   });
 });

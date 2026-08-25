@@ -11,7 +11,8 @@
     "grant": [
       "GM_setValue",
       "GM_getValue",
-      "GM_addStyle"
+      "GM_addStyle",
+      "unsafeWindow"
     ],
     "license": "MIT",
     "noframes": true,
@@ -25,7 +26,9 @@
       "src/utils/query.js",
       "src/utils/log.js",
       "src/core/cards.js",
+      "src/core/block.js",
       "src/observer/observer.js",
+      "src/network/interceptor.js",
       "src/main.js"
     ]
   }

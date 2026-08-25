@@ -1,5 +1,17 @@
 # 更新记录 (Changelog)
 
+## [0.5.0] - 增量处理 + 网络拦截占位
+
+### 功能
+- `MutationObserver` 改为**增量处理**：只在新增卡片插入时即时提取 / 校验 / 屏蔽，不再做全量重扫
+- 新增校验 + 屏蔽占位接口：`validateCard(card)` / `blockCard(card, el)`
+- 不再保存卡片 `el` / 不再累积数组：
+  - 用 `WeakSet` 记录已处理节点（弱引用，随 GC 释放）
+  - 卡片信息只保留轻量 `{ bvid, title, up }`
+  - 调试统计改为 `window.__blacklistStats = { processed, blocked }`
+- 新增网络拦截模块 `src/network/interceptor.js`：拦截 Fetch / XHR（基于 `unsafeWindow`），按 URL 过滤，默认不启用，后续可 `window.__blacklistInterceptors.install()` 开启
+- `@grant` 增加 `unsafeWindow`
+
 ## [0.4.0] - 重命名为 Remake
 
 ### 变更

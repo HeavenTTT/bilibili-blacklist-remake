@@ -34,10 +34,13 @@ bilibili-blacklist-remake/
 │   │   ├── query.js             # 查询工具（queryFirst / queryFirstText）
 │   │   └── log.js               # 控制台日志输出
 │   ├── core/
-│   │   └── cards.js             # 卡片查找与字段提取（含 collectCards，返回卡片本体 el）
+│   │   ├── cards.js             # 卡片查找与字段提取（extractCard，不含 el）
+│   │   └── block.js             # 校验 + 屏蔽接口（占位）
 │   ├── observer/
-│   │   └── observer.js          # MutationObserver 监听新增卡片
-│   └── main.js                  # 主入口：启动扫描与观察
+│   │   └── observer.js          # 增量 MutationObserver（只处理新增卡片）
+│   ├── network/
+│   │   └── interceptor.js       # Fetch / XHR 拦截（占位，默认不启用）
+│   └── main.js                  # 主入口：初次扫描 + 开启增量监听
 ├── scripts/
 │   └── dev.js                   # 一键开发脚本
 └── test/
@@ -91,7 +94,7 @@ npm run dev
 
 ## 🧪 当前功能
 
-打开 B 站页面后，脚本会观察页面上的**全部视频卡片**，并为每张卡片打印：
+打开 B 站页面后，脚本处理页面上的**视频卡片**：
 
 ```
 [🫥BlackList] 视频卡片 - <视频标题>
@@ -100,9 +103,12 @@ up    : <UP 主名字>
 bvid  : <BV 号>
 ```
 
-- 初次扫描打印页面已有的卡片；
-- 通过 `MutationObserver` 监听新增卡片（无限滚动 / SPA 加载），只对新出现的卡片打印；
-- 结果数组会暴露为 `window.__blacklistCards`，每一项为 `{ title, up, bvid, el }`，其中 **`el` 就是卡片 DOM 本体**，可直接用于后续改卡片 / 加按钮。
+- 初次扫描页面已有的卡片；
+- 之后通过 `MutationObserver` **增量监听**：只在“新卡片插入时”即时 提取 → 校验 → 屏蔽，**不做全量重扫**；
+- 用 `WeakSet` 记录已处理卡片（弱引用），卡片被移除后随 GC 释放，**不保存 el，也不累积数组**；
+- 校验与屏蔽接口 `validateCard()` / `blockCard()` 目前为空实现（占位）；
+- 调试统计：`window.__blacklistStats = { processed, blocked }`；
+- 网络拦截器（Fetch / XHR）已预留，默认不启用：后续用 `window.__blacklistInterceptors.install()` 开启。
 
 ### 选择器管理（易改）
 
