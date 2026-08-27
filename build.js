@@ -24,6 +24,8 @@ const VERSION = pkg.version;
 const outputDir = path.join(ROOT, src.outputDir || 'dist');
 const outputBase = src.outputBase || `${pkg.name}.user.js`;
 const modules = Array.isArray(src.modules) ? src.modules : [];
+const devModules = Array.isArray(src.devModules) ? src.devModules : [];
+const isDevBuild = process.argv.includes('--dev');
 
 /* 生成 userscript 元数据头 */
 function buildHeader() {
@@ -62,10 +64,26 @@ function buildHeader() {
   return lines.join('\n');
 }
 
-/* 按配置顺序读取并合并模块 */
+/* 生成免责声明横幅（放在 userscript 元数据头之后、IIFE 之前） */
+function buildDisclaimer() {
+  return [
+    '// =====================================================================',
+    '// 免责声明 (Disclaimer)',
+    '// 本插件（Bilibili-BlackList Remake）由人工智能 (AI) —— DeepSeek Harness —— 自动编写，',
+    '// 并非由人类逐行手工开发。请在使用前充分评估风险；第三方页面结构可能变化，',
+    '// 若出现异常、误伤或失效，请以项目 README 的说明为准，并谨慎使用。',
+    '// 作者：DeepSeek Harness (AI)',
+    '// =====================================================================',
+    '',
+  ].join('\n');
+}
+
+/* 按配置顺序读取并合并模块。
+ * 发布构建只合并 src.modules；dev 构建（--dev）会追加 src.devModules。 */
 function buildBody() {
   const parts = [];
-  for (const rel of modules) {
+  const list = isDevBuild ? modules.concat(devModules) : modules;
+  for (const rel of list) {
     const full = path.join(ROOT, rel);
     if (!fs.existsSync(full)) {
       throw new Error(`模块文件不存在: ${full}`);
@@ -83,8 +101,10 @@ if (!fs.existsSync(outputDir)) {
 const outputFile = path.join(outputDir, outputBase);
 const output = [
   buildHeader(),
+  buildDisclaimer(),
   '(function () {',
   '  "use strict";',
+  '  const __DSH_DEV__ = ' + (isDevBuild ? 'true' : 'false') + '; // 内建构建标志：仅 dev 构建为 true',
   '',
   buildBody(),
   '})();',
@@ -95,4 +115,5 @@ fs.writeFileSync(outputFile, output, 'utf8');
 
 console.log('Build completed: ' + outputFile);
 console.log('Version: ' + VERSION);
-console.log('Modules merged: ' + modules.length);
+console.log('Build type: ' + (isDevBuild ? 'dev (含 debug/dev-test 模块)' : 'release'));
+console.log('Modules merged: ' + (isDevBuild ? modules.length + devModules.length : modules.length));

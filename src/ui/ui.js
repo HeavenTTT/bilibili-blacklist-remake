@@ -690,6 +690,14 @@ function refreshConfigSettings() {
       { min: 0, max: 1, step: 0.05 }
     )
   );
+
+  // 免责声明 + AI 作者（展示在插件配置页底部，随插件一起可见）
+  const disclaimer = document.createElement("div");
+  disclaimer.className = "bilibili-blacklist-disclaimer";
+  disclaimer.textContent =
+    "免责声明：本插件由 AI（DeepSeek Harness）自动编写，并非人工逐行开发；" +
+    "使用前请自行评估风险。作者：DeepSeek Harness (AI)。";
+  configListElement.appendChild(disclaimer);
 }
 
 /**
@@ -1166,6 +1174,18 @@ GM_addStyle(`
     text-align: center;
     padding: 16px;
     color: #999;
+  }
+
+  /* 免责声明（配置页底部） */
+  .bilibili-blacklist-disclaimer {
+    margin-top: 16px;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #888;
+    border-top: 1px dashed #e0e0e0;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 4px;
   }
 
   /* 按钮 */

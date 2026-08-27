@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili-BlackList Remake -Dev (Loader)
 // @namespace    https://github.com/HeavenTTT/bilibili-blacklist
-// @version      0.1.0
+// @version      0.7.6
 // @author       HeavenTTT
 // @description  [开发专用] 每次打开 B 站页面自动拉取 localhost:5173 的最新构建产物并执行。本加载器只需安装一次。
 // @match        *://*.bilibili.com/*

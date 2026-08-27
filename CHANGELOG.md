@@ -1,5 +1,20 @@
 # 更新记录 (Changelog)
 
+## [0.7.6] - AI 作者 / 免责声明，测试方法仅 dev 构建生效
+
+### 变更
+- **AI 作者与免责声明**：userscript 元数据 `@author` 改为 `DeepSeek Harness (AI)`；
+  构建产物顶部加入**免责声明横幅**，强调本插件由 AI（DeepSeek Harness）自动编写，非人工逐行开发，
+  使用前请自行评估风险。`README.md` 同步加入免责声明与作者说明；插件管理面板「插件配置」页底部也显示免责声明。
+- **测试方法分离**：将原先写在 `src/main.js` 里的调试/测试入口（`__blockTestRun` /
+  `restoreCardsForUp` / `window.__blacklistConfig` / `window.__blacklistInterceptors` /
+  `window.__blacklistExpose`）迁移到独立的 **`src/debug/dev-test.js`** 模块。
+- **仅 dev 构建注入**：`build.js` 新增 `--dev` 标志，dev 构建（`npm run dev` /
+  `npm run build:dev`）会附加 `src.devModules`（即 `src/debug/dev-test.js`），
+  并在 IIFE 内定义 `__DSH_DEV__`；发布构建（`npm run build`）**不会包含**任何测试方法。
+- `scripts/dev.js` 改为调用 `node build.js --dev` 启动 dev 构建。
+- `package.json` 新增 `build:dev` 脚本；`author` 更新为 AI 作者，保留原版贡献者。
+
 ## [0.7.5] - 修复启动崩溃/闪烁/按钮失效/重复标签，新增网络拦截/遮挡模式重构/排行榜支持
 
 ### 关键修复
