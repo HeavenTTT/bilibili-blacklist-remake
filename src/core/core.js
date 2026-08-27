@@ -23,24 +23,32 @@ let isVideoCardQueueProcessing = false; // 是否正在处理队列
 let countBlockInfo = 0; // 已屏蔽视频计数
 let countBlockAD = 0; // 已屏蔽广告计数
 let countBlockTName = 0; // 已屏蔽标签名计数
+let countBlockVertical = 0; // 已屏蔽竖屏计数
 let countBlockCM = 0; // 已屏蔽cm.bilibili.com软广计数
 
 // 用于不同页面UP主名称选择器
+// 注意：把具体/作者专用的选择器排在前面，`.name` 这类宽泛选择器放最后作兜底，
+// 避免在视频播放页等结构里优先匹配到“游戏名/标签/评论者”等非 UP 名的 `.name`。
 const UP_NAME_SELECTORS = [
   ".bili-video-card__info--author", // 主页
   ".bili-video-card__author", // 分类页面 -> span title
-  ".name", // 视频播放页
   ".upname a span", // 视频播放页“接下来播放/相关推荐”卡片（新版结构）
   ".upname a",
   ".upname",
+  ".name", // 视频播放页旧版结构（兜底，放最后）
 ];
+// 作者链接兜底：视频卡片里指向用户空间的链接通常承载 UP 名
+const UP_NAME_SPACE_LINK_SELECTOR = 'a[href*="space.bilibili.com"]';
 
 // 用于不同页面视频标题选择器
 const VIDEO_TITLE_SELECTORS = [
   ".bili-video-card__info--tit", // 主页
   ".bili-video-card__title", // 分类页面 -> span title
   ".title", // 视频播放页
+  ".video-title", // 视频播放页新版标题类
 ];
+// 标题兜底：卡片内指向 /video/ 的链接文本
+const VIDEO_TITLE_LINK_SELECTOR = 'a[href*="/video/"]';
 
 // 屏蔽类型对应的原因文案
 const BLOCK_REASON_MAP = {
@@ -121,6 +129,24 @@ function addBlockContainerToCard(upName, cardElement) {
  * @returns {void}
  *
  */
+/**
+ * 计算某屏蔽类型最终使用的显示模式（支持按类型覆盖全局）。
+ * @param {string} type - 屏蔽类型：info/ad/tname/cm/vertical
+ * @returns {string} blur | kirby | hide
+ */
+function getEffectiveDisplayMode(type) {
+  const perTypeMap = {
+    info: globalPluginConfig.displayModeInfo,
+    ad: globalPluginConfig.displayModeAD,
+    tname: globalPluginConfig.displayModeTName,
+    cm: globalPluginConfig.displayModeCM,
+    vertical: globalPluginConfig.displayModeVertical,
+  };
+  const per = perTypeMap[type];
+  if (per && per !== "inherit") return per;
+  return globalPluginConfig.blockDisplayMode;
+}
+
 function hideVideoCard(cardElement, type = "none") {
   const realCardToBlock = getRealVideoCardElement(cardElement);
   if (!realCardToBlock) {
@@ -146,13 +172,17 @@ function hideVideoCard(cardElement, type = "none") {
     countBlockCM++;
   }
   if (type === "vertical") {
-    countBlockTName++;
+    countBlockVertical++;
   }
 
-  if (globalPluginConfig.flagKirby) {
-    addKirbyOverlayToCard(cardElement);
-  } else {
+  const mode = getEffectiveDisplayMode(type);
+  if (mode === "hide") {
     realCardToBlock.style.display = "none";
+    realCardToBlock.style.visibility = "";
+  } else {
+    realCardToBlock.style.display = "block";
+    realCardToBlock.style.visibility = "visible"; // 立即隐藏阶段用的是 visibility，需恢复显示遮罩
+    addDisplayOverlayToCard(cardElement, mode);
   }
 
   setBlockReasonOnCard(cardElement, type);
@@ -239,6 +269,10 @@ function queryAllVideoCards() {
     return document.querySelectorAll(".feed-card");
   } else if (isCurrentPageSearch()) {
     return document.querySelectorAll(".bili-video-card");
+  } else if (isCurrentPageRanking()) {
+    return document.querySelectorAll(
+      ".bili-video-card, .rank-item, .video-card, .rank-card"
+    );
   }
   return null;
 }
@@ -255,24 +289,27 @@ function processCard(card) {
   if (processedVideoCards.has(card)) {
     return;
   }
-  const { upName, videoTitle } = getVideoCardInfo(card);
-  // 如果获取到UP主名称和视频标题，则添加屏蔽按钮
-  if (upName && videoTitle) {
-    addBlockContainerToCard(upName, card);
+  const realCard = getRealVideoCardElement(card);
 
-    // --- 根据 flagHideOnLoad 开关决定是否立即隐藏卡片 ---
-    const realCard = getRealVideoCardElement(card);
-    if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
-      // 只有在"显示全部"模式关闭时才执行
-      if (globalPluginConfig.flagKirby) {
-        addKirbyOverlayToCard(card); // 卡比模式下添加遮罩
-        realCard.style.display = "block"; // 确保卡片本身是显示的
-      } else {
-        realCard.style.display = "none"; // 非卡比模式下直接隐藏
-      }
-    }
+  // --- 根据 flagHideOnLoad 开关决定是否立即隐藏卡片 ---
+  // 立即隐藏“所有”新卡片（不只命中黑名单的，也不只已成功解析 UP名/标题的）：
+  // 防止 tname/竖屏 API 稍后返回再隐藏卡片导致的重排与“先显示后隐藏”的闪烁。
+  // 用 visibility:hidden 保留布局空间，恢复显示时不产生位移；后续队列处理后再决定：
+  // 未命中 → 恢复显示；命中 → 保持隐藏/加遮罩。
+  // 注意：即使此刻还没解析出 UP名/标题（未创建屏蔽按钮），也要先隐藏，
+  // 否则这类卡片会先冒出、稍后再被判定隐藏，造成闪烁。
+  if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos && realCard) {
+    realCard.style.visibility = "hidden";
   }
   // --- 立即隐藏卡片的逻辑结束 ---
+
+  const { upName, videoTitle } = getVideoCardInfo(card);
+  // 只要解析到 UP 主名称就添加“屏蔽”按钮（按钮按 UP 名屏蔽，不需要标题；
+  // 有些卡片标题解析失败但仍可通过 UP 名手动屏蔽，避免“按钮缺失导致无法屏蔽”）。
+  if (upName && realCard) {
+    addBlockContainerToCard(upName, card);
+  }
+
   // 将卡片添加到处理队列
   videoCardProcessQueue.add(card);
 }
@@ -318,14 +355,17 @@ function fixMainPageLayout() {
   const container = document.querySelector(
     ".recommended-container_floor-aside .container"
   );
-
   if (container) {
     const children = container.children;
     let visibleIndex = 0;
-    // 调整可见卡片的边距，使布局更紧凑
+    // 屏蔽后把可见卡片的垂直间距规整为 B 站默认（首行顶部 0、第二行 24px），
+    // 避免隐藏卡片后剩余卡片的 top 不对齐（旧版修复；当前主页该容器仍存在）。
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
-      if (child.style.display !== "none") {
+      if (
+        child.style.display !== "none" &&
+        child.style.visibility !== "hidden"
+      ) {
         if (visibleIndex <= 6) {
           child.style.marginTop = "0px";
         } else if (visibleIndex < 12) {
@@ -345,18 +385,18 @@ function fixMainPageLayout() {
 function toggleShowAllBlockedVideos() {
   isShowAllVideos = !isShowAllVideos;
   blockedVideoCards.forEach((card) => {
-    if (globalPluginConfig.flagKirby) {
-      const kirbyOverlay = card.querySelector("#bilibili-blacklist-kirby");
-      if (kirbyOverlay) {
-        if (isShowAllVideos) {
-          kirbyOverlay.style.display = "none";
-        } else {
-          fadeInKirbyOverlay(kirbyOverlay);
-        }
+    const overlay = card.querySelector("#bilibili-blacklist-kirby");
+    if (overlay) {
+      if (isShowAllVideos) {
+        overlay.style.display = "none";
+      } else {
+        fadeInKirbyOverlay(overlay);
       }
       card.style.display = "block";
+      card.style.visibility = "visible";
     } else {
       card.style.display = isShowAllVideos ? "block" : "none";
+      card.style.visibility = isShowAllVideos ? "visible" : "";
     }
   });
   tempUnblockButton.textContent = isShowAllVideos ? "恢复屏蔽" : "取消屏蔽";
@@ -374,22 +414,47 @@ function getVideoCardInfo(cardElement) {
   let upName = "";
   let videoTitle = "";
 
+  // UP主名称：优先具体作者选择器；未取到再用“指向用户空间的链接”兜底
   const upNameElements = cardElement.querySelectorAll(
     UP_NAME_SELECTORS.join(", ")
   );
   if (upNameElements.length > 0) {
     upName = upNameElements[0].textContent.trim();
-    if (isCurrentPageCategory()) {
-      // 分类页面的UP主名称可能包含其他信息，需要进一步处理
-      upName = upName.split(" · ")[0].trim();
+  }
+  if (!upName) {
+    const spaceLinks = cardElement.querySelectorAll(UP_NAME_SPACE_LINK_SELECTOR);
+    for (const a of spaceLinks) {
+      const t = (a.textContent || "").trim();
+      if (t) {
+        upName = t;
+        break;
+      }
     }
   }
+  if (isCurrentPageCategory()) {
+    // 分类页面的UP主名称可能包含其他信息，需要进一步处理
+    upName = upName.split(" · ")[0].trim();
+  }
+  // 去掉误带进来的“ · 时间/日期”后缀（如 “ · 08-23”、“ · 昨天”），
+  // 保证精确匹配与“屏蔽按 UP 名”用的是干净的 UP 名。
+  upName = upName.replace(/\s*·\s*(刚刚|\d{1,2}[-/]\d{1,2}(-\d{2,4})?|昨天|前天|今天|\d+小时前|\d+天前|\d+分钟前|\d+-\d+-\d+.*)$/i, "").trim();
 
+  // 视频标题：优先标题选择器；未取到再用“指向 /video/ 的链接文本”兜底
   const titleElements = cardElement.querySelectorAll(
     VIDEO_TITLE_SELECTORS.join(", ")
   );
   if (titleElements.length > 0) {
     videoTitle = titleElements[0].textContent.trim();
+  }
+  if (!videoTitle) {
+    const videoLinks = cardElement.querySelectorAll(VIDEO_TITLE_LINK_SELECTOR);
+    for (const a of videoLinks) {
+      const t = (a.textContent || "").trim();
+      if (t) {
+        videoTitle = t;
+        break;
+      }
+    }
   }
   return { upName, videoTitle };
 }

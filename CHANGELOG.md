@@ -1,5 +1,98 @@
 # 更新记录 (Changelog)
 
+## [0.7.5] - 修复启动崩溃/闪烁/按钮失效/重复标签，新增网络拦截/遮挡模式重构/排行榜支持
+
+### 关键修复
+- **构建顺序导致的启动崩溃**：`pages.js` 段“立即初始化”会同步调用
+  `installNetworkInterceptors()`，而 `interceptor.js` 的 `var NET_INTERCEPT` 尚未求值
+  （为 `undefined`），抛 `Cannot read properties of undefined (reading 'enabled')`，
+  导致整个脚本 eval 失败、页面无任何功能。已将“晚注入立即初始化”移到 IIFE 末尾
+  （`src/main.js`），确保所有模块求值完毕后再初始化。
+- **`flagHideOnLoad` 闪烁（问题 1）**：`processCard` 改为只要开启“加载时立即隐藏卡片”，
+  就对**所有**新卡片先 `visibility:hidden`（不再只对解析到 UP名/标题的卡片），
+  交给队列判定后再统一显示/保持隐藏，避免“先显示后隐藏”造成的重排闪烁。
+- **重复 Tname 按钮（问题 2）**：新增 `addTNameButtonToGroup()`，按文本去重
+  `data.tname / data.tname_v2 / tid_v2 映射的 name / name_v2`，同一标签只留一个按钮。
+- **部分卡片无法获取 Tname 导致不显示（问题 3）**：移除队列里“无法解析 UP名/标题就视为应
+  屏蔽（保持隐藏）”的启发式；无法解析的卡片统一恢复显示，避免误伤/永久空白。
+  同时 `getVideoCardInfo` 增加“指向用户空间的作者链接 / 指向 /video/ 的标题链接”兜底，
+  提高不同卡片结构下的提取成功率。
+- **屏蔽 UP 名按钮失效（问题 4）**：改为统一事件委托——所有“屏蔽/标签”按钮不再各自
+  `addEventListener`，改由 `document` 捕获阶段的一个监听统一处理，用 `data-up-name` /
+  `data-tag-name` 标明目标，`findCardForButton()` 反查所属卡片。B 站重渲染后依然有效，
+  点击穿透也被 `stopPropagation` 阻止。
+- **/video/ 播放页被屏蔽卡片闪烁且按钮全部失效（问题 5）**：依赖上述修复。按钮只在解析到
+  UP 名时就创建（不再强求标题），队列按 `upName || videoTitle` 参与判定（缺标题也能按 UP
+  名精确匹配），故“屏蔽按钮无效/缺失但确实符合屏蔽要求”的卡片可被正确识别并隐藏。
+- 新增非破坏性自动化测试入口 `window.__blacklistExpose.testBlock100(n)`，配合
+  `TEST_FLOW.md §9` 验证 100 次不同 UP 屏蔽全部生效。
+- **tname 解析失败重试**（本次补充）：开启 `flagTName` 时，若 view 接口返回 `null` 或解析不出
+  任何分类标签，卡片会先被**重排到队列末尾**重试一次（队列中仅它时相当于立即重试）；再次失败
+  则**按屏蔽处理**（当作分类标签命中，直接遮挡/隐藏），避免因 API 偶发失败导致本应屏蔽的卡片
+  漏网。用 `tnameRetriedCards`（WeakSet）记录已重试卡片，防止无限重试。
+
+### 新增功能
+- **网络拦截真正落地**（`src/network/interceptor.js`）：`NET_INTERCEPT.rewrite` 置为 `true`，
+  `rewriteRecommendation()` 解析推荐/相关接口 JSON，按 `isBlacklisted(up, title)` 过滤
+  `data.item` 与 `data`（数组）中的命中条目后再交回页面；`urlPatterns` 填入
+  `wbi/index/top/feed/rcmd`、`wbi/index/feed`、`wbi/index/web/feed/rcmd`、
+  `archive/related`。由新配置 `flagNetworkIntercept` 控制，默认开启。
+- **遮挡方式重构**：`flagKirby` 布尔替换为全局 `blockDisplayMode`
+  （`blur`=模糊遮盖 / `kirby`=模糊遮盖加卡比 / `hide`=隐藏卡片），并新增按屏蔽类型独立覆盖的
+  `displayModeInfo` / `displayModeAD` / `displayModeTName` / `displayModeCM` /
+  `displayModeVertical`（`inherit`=继承全局）；`hideVideoCard()` 通过
+  `getEffectiveDisplayMode(type)` 决定遮罩或隐藏，`addDisplayOverlayToCard(card, mode)`
+  支持仅模糊（不带卡比）模式。
+- **排行榜页支持**：新增 `isCurrentPageRanking()` / `initializeRankingPage()`；
+  `queryAllVideoCards()` 增加排行页卡片选择器（`.rank-item` / `.video-card` / `.rank-card`）。
+- **首屏/页面内补扫**：主页、搜索、分类页在观察器挂载后延迟 `800ms` 补一次
+  `scanAndBlockVideoCards()`；视频页恢复每 `2500ms` 定时补扫（内部有节流与去重），
+  并调整“恢复自动连播配置”仅在用户未改过（`flagSkipBlockedAutoplay === "off"`）时才恢复。
+- **旧版黑名单一次性迁移**：新增 `src/storage/migration-data.js`（由 `test/testBlackList.json`
+  生成，含旧版精确/正则/分类标签黑名单），首次启动合并进现存储，写 `migratedOldBlacklistV1`
+  标记避免重复合并。
+- **数值配置校验**：`clampNumber` 校准 `blockScanInterval` / `processQueueInterval` /
+  `verticalScaleThreshold`；把旧 `flagKirby` 迁移为 `blockDisplayMode`；校验
+  `blockDisplayMode` 与各 `displayMode*` 的取值。
+- **自动连播多P感知**：新增 `getCurrentCid()`，取播放器 / URL `p` 参数 / 选区面板当前分P信息，
+  并入自动连播签名，切分P（BV/标题/UP 均不变）也能正确触发处理。
+- **管理按钮/油猴菜单**：新增 `flagHeaderButton`（顶栏管理按钮显隐）与
+  `initTampermonkeyMenu()`（`GM_registerMenuCommand`：切换顶栏按钮 / 打开管理面板）；
+  观察器定时兜底重挂 `addBlacklistManagerButton()`。
+- **UP 名清洗**：`getVideoCardInfo()` 去除 UP 名中“ · 时间/日期”后缀
+  （如 `· 08-23`、`· 昨天`），保证精确匹配与“屏蔽按 UP 名”用的是干净名字；
+  并新增“指向用户空间链接 / 指向 /video/ 链接”的标题与 UP 兜底。
+- **开发加载器健壮性**：`scripts/dev.js` 默认双栈监听 `::`（对外展示 `localhost`）；
+  `test` 加载器改用 `127.0.0.1` 优先、`localhost` 备用，最多 6 次重试/交替，并加页面角标诊断。
+
+### 变更
+- `src/main.js`：移出 `DOMContentLoaded` 包裹，改为模块求值末尾挂暴露对象与立即初始化；
+  新增 `__blockTestRun` / `restoreCardsForUp`；`stats` 增加 `vertical`。
+- `src/core/core.js`：`processCard` 立即隐藏逻辑重排；`getVideoCardInfo` 增加兜底选择器与
+  UP 名时间后缀清洗；`hideVideoCard` 改用 `getEffectiveDisplayMode` / `addDisplayOverlayToCard`；
+  新增排行榜页选择器、`fixMainPageLayout` 兼容 `visibility:hidden`；竖屏计数独立为 `countBlockVertical`。
+- `src/core/video-data.js`：队列判定条件放宽为 `upName || videoTitle`；Tname 去重；
+  新增 `tnameRetriedCards` 重试与失败按屏蔽处理；view 接口数据 10 分钟缓存。
+- `src/ui/ui.js`：`createBlockUpButton` / `createTNameBlockButton` 去掉单按钮点击，改为
+  `data-*` + 事件委托；新增 `setupCardButtonDelegation` / `findCardForButton`；
+  遮挡模式下拉与各类型独立显示模式、`flagHeaderButton` / `flagNetworkIntercept` 开关；
+  遮罩支持仅模糊模式。
+- `src/storage/storage.js`：新增旧版黑名单迁移、数值配置 clamp 校验、`flagKirby`→
+  `blockDisplayMode` 迁移与显示模式校验；新增默认配置项。
+- `src/network/interceptor.js`：`rewrite` 置 `true`，`rewriteRecommendation()` 实际过滤
+  推荐/相关接口响应；填入推荐/相关接口关键字。
+- `src/autoplay/autoplay.js`：新增 `getCurrentCid()`，连播签名加入分P信息。
+- `src/pages/pages.js`：`initializeScript` 调用 `setupCardButtonDelegation` /
+  `initTampermonkeyMenu`，按 `flagNetworkIntercept` 安装网络拦截；移除过早的立即初始化
+  （已移到 main.js 末尾）；新增排行榜页初始化；主页/搜索/分类页延迟补扫；视频页恢复 2.5s 定时补扫。
+- `src/observer/observer.js`：定时兜底重挂 `addBlacklistManagerButton()`。
+- `build.config.json`：`@grant` 增加 `GM_registerMenuCommand`；模块列表加入
+  `src/storage/migration-data.js`。
+- `scripts/dev.js`：默认双栈监听 `::`，展示地址用 `localhost`。
+- `test/bilibili-blacklist-remake.dev.user.js`：`127.0.0.1`/localhost 交替 + 最多 6 次重试 +
+  页面角标诊断；`@grant` 增加 `GM_registerMenuCommand`。
+- `.gitignore`：忽略 `test/testBlackList.json` 与 `TEST_FLOW.md`（迁移数据/文档不再入库）。
+
 ## [0.7.4] - 修复面板计数标题不显示
 
 ### 修复

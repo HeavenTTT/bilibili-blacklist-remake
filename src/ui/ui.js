@@ -4,12 +4,22 @@
  * 顶栏入口 + 管理面板 + 遮挡层 / 屏蔽按钮 / 悬停临时显示。
  */
 const KIRBY_FADE_DURATION_MS = 800;
+// 各屏蔽类型独立显示行为的下拉选项
+const DISPLAY_MODE_INHERIT_OPTIONS = [
+  { value: "inherit", label: "继承全局" },
+  { value: "blur", label: "模糊遮盖" },
+  { value: "kirby", label: "模糊遮盖加卡比" },
+  { value: "hide", label: "隐藏卡片" },
+];
 const hoverRevealBoundCards = new WeakSet();
 const hoverRevealTimers = new WeakMap();
 const kirbyFadeTimers = new WeakMap();
 
 /**
  * 为UP主创建屏蔽按钮，显示在视频卡片上。
+ * 说明：不再为每个按钮单独绑定点击事件，而是把 UP 名写入 data-up-name，
+ * 由全局统一的 setupCardButtonDelegation() 做事件委托（捕获阶段），
+ * 避免重复绑定、并在 B 站重渲染按钮后依然可用。
  * @param {string} upName - UP主名称。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  * @returns {HTMLDivElement} 创建的按钮元素。
@@ -17,19 +27,16 @@ const kirbyFadeTimers = new WeakMap();
 function createBlockUpButton(upName, cardElement) {
   const button = document.createElement("div");
   button.className = "bilibili-blacklist-block-btn";
-  button.innerHTML = "屏蔽";
+  button.textContent = "屏蔽";
   button.title = `屏蔽: ${upName}`;
-
-  button.addEventListener("click", (e) => {
-    e.stopPropagation(); // 阻止事件冒泡，防止触发视频点击事件
-    addToExactBlacklist(upName, cardElement);
-  });
+  button.dataset.upName = upName || "";
 
   return button;
 }
 
 /**
  * 为标签名创建屏蔽按钮，显示在视频卡片上。
+ * 说明：与屏蔽按钮一样，不再单独绑定点击事件，由统一事件委托处理。
  * @param {string} tagName - 标签名。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  * @returns {HTMLSpanElement} 创建的按钮元素。
@@ -37,21 +44,82 @@ function createBlockUpButton(upName, cardElement) {
 function createTNameBlockButton(tagName, cardElement) {
   const button = document.createElement("span");
   button.className = "bilibili-blacklist-tname";
-  button.innerHTML = `${tagName}`;
+  button.textContent = tagName;
   button.title = `屏蔽: ${tagName}`;
-
-  button.addEventListener("click", (e) => {
-    e.stopPropagation(); // 阻止事件冒泡
-    addToTagNameBlacklist(tagName, cardElement);
-  });
+  button.dataset.tagName = tagName || "";
 
   return button;
+}
+
+// 已知的视频卡片根节点选择器，用于事件委托时从按钮反查所属卡片
+const CARD_ROOT_SELECTORS_FOR_BUTTON = [
+  ".bili-video-card",
+  ".video-page-card-small",
+  ".feed-card",
+];
+
+/**
+ * 从被点击的屏蔽/标签按钮反查其所属的视频卡片元素。
+ * 优先向上找已知的卡片根节点；找不到时退回容器宿主。
+ * @param {HTMLElement} button - 被点击的按钮。
+ * @returns {HTMLElement|null} 卡片元素。
+ */
+function findCardForButton(button) {
+  const container = button.closest(".bilibili-blacklist-block-container");
+  if (!container) return null;
+  for (const sel of CARD_ROOT_SELECTORS_FOR_BUTTON) {
+    const node = container.closest(sel);
+    if (node) return node;
+  }
+  // 兜底：容器宿主通常是卡片本身或其内部元素
+  return container.parentElement;
+}
+
+// 事件委托是否已安装（全局只装一次）
+let cardButtonDelegationInstalled = false;
+
+/**
+ * 统一的事件委托：给所有“屏蔽”/“标签”按钮共用一个 document 监听器，
+ * 不再为每个按钮单独 addEventListener（问题：部分卡片按钮失效/重复绑定/重渲染后失效）。
+ * 用捕获阶段（capture=true）在 B 站自身事件处理之前触发，stopPropagation 阻止点击穿透。
+ */
+function setupCardButtonDelegation() {
+  if (cardButtonDelegationInstalled) return;
+  cardButtonDelegationInstalled = true;
+  document.addEventListener(
+    "click",
+    function (e) {
+      const t = e.target;
+      if (!t || typeof t.closest !== "function") return;
+
+      const blockBtn = t.closest(".bilibili-blacklist-block-btn");
+      if (blockBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        const upName = blockBtn.dataset.upName || "";
+        if (!upName) return;
+        addToExactBlacklist(upName, findCardForButton(blockBtn));
+        return;
+      }
+
+      const tnameBtn = t.closest(".bilibili-blacklist-tname");
+      if (tnameBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        const tagName = tnameBtn.dataset.tagName || "";
+        if (!tagName) return;
+        addToTagNameBlacklist(tagName, findCardForButton(tnameBtn));
+      }
+    },
+    true
+  );
 }
 
 /**
  * 将黑名单管理器按钮添加到右侧导航条。
  */
 function addBlacklistManagerButton() {
+  if (!globalPluginConfig.flagHeaderButton) return; // 油猴菜单可关闭顶部按钮
   const rightEntry = document.querySelector(".right-entry");
   if (!rightEntry) {
     console.warn("[🫥BlackList] 未找到右侧导航栏");
@@ -96,6 +164,31 @@ function addBlacklistManagerButton() {
 }
 
 /**
+ * 通过油猴菜单切换顶部管理按钮的显示/隐藏。
+ */
+function toggleHeaderButtonVisibility() {
+  const btn = document.querySelector("#bilibili-blacklist-manager-button");
+  if (btn) {
+    btn.style.display = globalPluginConfig.flagHeaderButton ? "" : "none";
+  }
+}
+
+/**
+ * 注册 Tampermonkey 菜单项（需 @grant GM_registerMenuCommand）。
+ */
+function initTampermonkeyMenu() {
+  if (typeof GM_registerMenuCommand !== "function") return;
+  GM_registerMenuCommand("显示/隐藏顶部管理按钮", () => {
+    globalPluginConfig.flagHeaderButton = !globalPluginConfig.flagHeaderButton;
+    saveGlobalConfigToStorage();
+    toggleHeaderButtonVisibility();
+  });
+  GM_registerMenuCommand("打开黑名单管理面板", () => {
+    if (managerPanel) managerPanel.style.display = "flex";
+  });
+}
+
+/**
  * 更新已屏蔽视频的显示计数。
  */
 function refreshBlockCountDisplay() {
@@ -103,7 +196,7 @@ function refreshBlockCountDisplay() {
     blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
   }
   if (blockCountTitleElement) {
-    blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName})`;
+    blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVertical})`;
   }
 }
 
@@ -405,7 +498,7 @@ function refreshConfigSettings() {
   configListElement.appendChild(tempToggleContainer);
 
   const title = document.createElement("h4");
-  title.textContent = "全局配置开关(部分功能刷新后生效)";
+  title.textContent = "全局配置开关(对之后新加载的卡片生效)";
   configListElement.appendChild(title);
 
   // 添加配置切换按钮
@@ -491,7 +584,65 @@ function refreshConfigSettings() {
   configListElement.appendChild(hr);
 
   configListElement.appendChild(
-    createSettingToggleButton("遮挡被屏蔽视频", "flagKirby", "更加温和的方式")
+    createSettingSelect(
+      "卡片遮挡模式(全局):",
+      "blockDisplayMode",
+      "被屏蔽卡片的显示方式：模糊遮盖 / 模糊遮盖加卡比 / 隐藏卡片。",
+      [
+        { value: "blur", label: "模糊遮盖" },
+        { value: "kirby", label: "模糊遮盖加卡比" },
+        { value: "hide", label: "隐藏卡片" },
+      ]
+    )
+  );
+
+  // 每种屏蔽类型的独立行为（继承全局）
+  configListElement.appendChild(
+    createSettingSelect(
+      "标题/UP主名行为:",
+      "displayModeInfo",
+      "标题/UP主名命中的卡片显示方式，选择继承全局则跟随上方全局模式。",
+      DISPLAY_MODE_INHERIT_OPTIONS
+    )
+  );
+  configListElement.appendChild(
+    createSettingSelect(
+      "广告行为:",
+      "displayModeAD",
+      "广告卡片的显示方式，选择继承全局则跟随上方全局模式。",
+      DISPLAY_MODE_INHERIT_OPTIONS
+    )
+  );
+  configListElement.appendChild(
+    createSettingSelect(
+      "分类标签行为:",
+      "displayModeTName",
+      "分类标签命中的卡片显示方式，选择继承全局则跟随上方全局模式。",
+      DISPLAY_MODE_INHERIT_OPTIONS
+    )
+  );
+  configListElement.appendChild(
+    createSettingSelect(
+      "竖屏行为:",
+      "displayModeVertical",
+      "竖屏命中的卡片显示方式，选择继承全局则跟随上方全局模式。",
+      DISPLAY_MODE_INHERIT_OPTIONS
+    )
+  );
+  configListElement.appendChild(
+    createSettingSelect(
+      "软广(CM)行为:",
+      "displayModeCM",
+      "cm.bilibili.com 软广卡片的显示方式，选择继承全局则跟随上方全局模式。",
+      DISPLAY_MODE_INHERIT_OPTIONS
+    )
+  );
+  configListElement.appendChild(
+    createSettingToggleButton(
+      "网络拦截(推荐接口)",
+      "flagNetworkIntercept",
+      "启用后拦截并改写推荐/相关接口响应，命中黑名单的条目不再下发（实验性，刷新页面后生效）。"
+    )
   );
   configListElement.appendChild(
     createSettingToggleButton(
@@ -512,7 +663,7 @@ function refreshConfigSettings() {
     createSettingToggleButton(
       "加载时立即隐藏卡片",
       "flagHideOnLoad",
-      "新卡片加载出来时是否立即隐藏，待处理完成后再决定显示或继续屏蔽。关闭此功能可能会导致卡片先显示后隐藏的闪烁。"
+      "开启：新卡片立即隐藏（用 visibility 占位，减少重排闪烁），等分类/竖屏 API 判定完再统一显示——避免“先显示、后被屏蔽导致卡片重排”。关闭：卡片先显示，若稍后被判定屏蔽会产生一次重排（观感更突兀），但处理速度感更快。建议开启。"
     )
   );
 
@@ -528,14 +679,15 @@ function refreshConfigSettings() {
     createSettingInput(
       "视频信息API请求间隔 (ms):",
       "processQueueInterval",
-      "每个视频获取分类标签/视频分辨率时的API请求间隔时间，单位 ms。间隔时间越长，越不容易触发B站API限速。建议值 200ms。"
+      "每个视频获取分类标签/视频分辨率时的API请求间隔时间，单位 ms。值越小处理越快；实测 16ms 一般不触发 B 站 API 限流，但请自行观察网络面板。"
     )
   );
   configListElement.appendChild(
     createSettingInput(
       "竖屏视频比例阈值:",
       "verticalScaleThreshold",
-      "获取的视频API信息后，判断视频是否为竖屏（长 除于 宽）的阈值。建议值 0.7。"
+      "视频宽度/高度小于该阈值时判定为竖屏（0-1）。建议值 0.7。",
+      { min: 0, max: 1, step: 0.05 }
     )
   );
 }
@@ -634,7 +786,7 @@ function createBlacklistPanel() {
   header.className = "bilibili-blacklist-panel-header";
 
   blockCountTitleElement = document.createElement("h3");
-  blockCountTitleElement.title = "总数 =(UP/标题 + 广告 + CM + 分类/竖屏)";
+  blockCountTitleElement.title = "总数 =(UP/标题 + 广告 + CM + 分类 + 竖屏)";
 
   const closeBtn = document.createElement("button");
   closeBtn.className = "bilibili-blacklist-panel-close";
@@ -699,6 +851,15 @@ function createBlacklistPanel() {
   addRegexContainer.appendChild(regexInput);
   addRegexContainer.appendChild(addRegexBtn);
   regexContent.appendChild(addRegexContainer);
+
+  const regexHint = document.createElement("div");
+  regexHint.className = "bilibili-blacklist-regex-hint";
+  regexHint.textContent =
+    "提示：纯文本按“包含”匹配（忽略大小写），短词可能误伤；" +
+    "如需精确/边界匹配请用正则，如 /^米哈游/、/\b原神\b/。";
+  regexHint.style.cssText =
+    "font-size:12px;color:#999;margin:0 0 12px;line-height:1.5;";
+  regexContent.appendChild(regexHint);
 
   // 创建列表元素
   exactMatchListElement = document.createElement("ul");
@@ -1100,6 +1261,10 @@ GM_addStyle(`
     margin-top: -40px;
   }
 
+  #bilibili-blacklist-kirby.bilibili-blacklist-kirby-blur-only svg {
+    display: none !important;
+  }
+
   #bilibili-blacklist-kirby.bilibili-blacklist-kirby-video svg {
     margin-top: -10px;
   }
@@ -1209,7 +1374,10 @@ function restoreAllBlockedVideoOverlays() {
   if (isShowAllVideos) return;
   blockedVideoCards.forEach((card) => {
     const overlay = card.querySelector("#bilibili-blacklist-kirby");
-    if (overlay) fadeInKirbyOverlay(overlay);
+    if (overlay) {
+      card.style.visibility = "visible";
+      fadeInKirbyOverlay(overlay);
+    }
   });
 }
 
@@ -1277,16 +1445,21 @@ function bindHoverRevealToCard(cardElement) {
 }
 
 /**
- * 为视频卡片添加卡比主题的覆盖层。
+ * 为视频卡片添加显示遮罩（模糊遮盖或模糊遮盖加卡比）。
  * @param {HTMLElement} cardElement - 视频卡片元素。
+ * @param {string} mode - "blur" | "kirby"
  */
-function addKirbyOverlayToCard(cardElement) {
+function addDisplayOverlayToCard(cardElement, mode) {
   bindHoverRevealToCard(cardElement);
-  // 如果已经有Kirby覆盖层，则不重复添加
+  // 如果已经有遮罩层，则不重复添加
   if (cardElement.querySelector("#bilibili-blacklist-kirby") != null) return;
   const kirbyWrapper = document.createElement("div");
-  kirbyWrapper.innerHTML = getKirbySVG();
   kirbyWrapper.id = "bilibili-blacklist-kirby";
+  if (mode === "blur") {
+    kirbyWrapper.classList.add("bilibili-blacklist-kirby-blur-only");
+  } else {
+    kirbyWrapper.innerHTML = getKirbySVG();
+  }
   if (isCurrentPageVideo()) {
     kirbyWrapper.classList.add("bilibili-blacklist-kirby-video");
   }
@@ -1310,6 +1483,14 @@ function addKirbyOverlayToCard(cardElement) {
   }
 
   hostElement.appendChild(kirbyWrapper);
+}
+
+/**
+ * 为视频卡片添加卡比主题的覆盖层（兼容旧调用）。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ */
+function addKirbyOverlayToCard(cardElement) {
+  addDisplayOverlayToCard(cardElement, "kirby");
 }
 
 /**

@@ -84,6 +84,72 @@ function getCurrentBv() {
 }
 
 /**
+ * 取当前播放视频的分P/CID：优先播放器，其次 URL 的 p 参数。
+ * 多P视频切换分P时 BV/标题/UP 均不变，必须用分P信息才能感知切换。
+ * @returns {string}
+ */
+function getCurrentCid() {
+  const p = window.player;
+  if (p) {
+    const tries = [
+      () => p.getVideoData && p.getVideoData().cid,
+      () => p.getVideoInfo && p.getVideoInfo().cid,
+      () => p.__video && p.__video.cid,
+      () => p.getCurrentVideo && p.getCurrentVideo().cid,
+      () => p.getConfig && p.getConfig().cid,
+      () => p.getVideoData && p.getVideoData().page && p.getVideoData().page.cid,
+      () => p.getVideoInfo && p.getVideoInfo().page && p.getVideoInfo().page.cid,
+      () => p.__playerData && p.__playerData.cid,
+      () => p.__initedData && p.__initedData.cid,
+    ];
+    for (const f of tries) {
+      try {
+        const v = f();
+        if (typeof v === "number" || (typeof v === "string" && v)) {
+          return String(v);
+        }
+      } catch (e) {
+        // 该方法不适用，继续尝试
+      }
+    }
+  }
+  // 直接看 <video> 的 currentSrc（切分P时 cid 会变）
+  try {
+    const video = document.querySelector(
+      "#bilibili-player video, .bilibili-player video, video"
+    );
+    if (video && video.currentSrc) {
+      const m =
+        video.currentSrc.match(/[?&]cid=(\d+)/) ||
+        video.currentSrc.match(/\/cid\/(\d+)/);
+      if (m) return "cid" + m[1];
+    }
+  } catch (e) {
+    // 忽略
+  }
+  // 兜底：URL 的 p 参数
+  const m = location.search.match(/[?&]p=(\d+)/);
+  if (m) return "p" + m[1];
+  // 兜底2：选集面板当前高亮分P（多P同BV时靠它感知切换）
+  try {
+    const actives = document.querySelectorAll(
+      ".video-episode-card__title.active, .video-episode-card__title.current, " +
+      ".video-episode-card__title[aria-current], .bpx-player-ctrl-episode .active, " +
+      ".bpx-player-ctrl-episode .current, .bpx-player-ctrl-episode [aria-current], " +
+      ".list-box .active, .list-box .current, [class*='episode-card'] .active, " +
+      "[class*='episode-card'] .current, .episode-item.active, .episode-item.current"
+    );
+    for (const el of actives) {
+      const txt = (el.textContent || "").trim();
+      if (txt) return "part:" + txt.slice(0, 40);
+    }
+  } catch (e) {
+    // 忽略
+  }
+  return "";
+}
+
+/**
  * 从页面 DOM 读取“当前正在播放的视频”的标题和 UP 主名。
  * 播放器在切集时会原地更新这些信息，因此它是判断“当前播放视频”最可靠的信号。
  * @returns {{upName: string, title: string}}
@@ -568,7 +634,8 @@ function initAutoplaySkip() {
       return;
     }
     const info = getPlayingVideoInfo();
-    const signature = `${info.upName}||${info.title}||${bv}`;
+    const cid = getCurrentCid();
+    const signature = `${info.upName}||${info.title}||${bv}||${cid}`;
     if (signature === lastSignature) return; // 视频没变
 
     lastSignature = signature;

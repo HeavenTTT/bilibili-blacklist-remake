@@ -20,7 +20,9 @@ const { spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
 const PORT = Number(process.env.PORT) || 5173;
-const HOST = process.env.HOST || '127.0.0.1';
+// 默认双栈监听（::），同时接受 IPv4/IPv6 —— 避免浏览器把 localhost 解析到 ::1 时连接被拒
+const HOST = process.env.HOST || '::';
+const DISPLAY_HOST = process.env.HOST || 'localhost';
 
 /* 读取构建配置，得到产物文件名与目录 */
 function loadBuildTarget() {
@@ -32,8 +34,8 @@ function loadBuildTarget() {
 }
 
 const BUILD_TARGET = loadBuildTarget();
-const BUILD_URL = `http://${HOST}:${PORT}/${BUILD_TARGET.outputDir}/${BUILD_TARGET.outputBase}`;
-const LOADER_URL = `http://${HOST}:${PORT}/test/${pkgName()}.dev.user.js`;
+const BUILD_URL = `http://${DISPLAY_HOST}:${PORT}/${BUILD_TARGET.outputDir}/${BUILD_TARGET.outputBase}`;
+const LOADER_URL = `http://${DISPLAY_HOST}:${PORT}/test/${pkgName()}.dev.user.js`;
 
 function pkgName() {
   return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).name;

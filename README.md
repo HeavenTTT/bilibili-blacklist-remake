@@ -120,7 +120,7 @@ npm run dev
 
 ### 插件配置（面板内「插件配置」标签页）
 
-按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`flagKirby`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关，以及标签缓存清除、悬停延迟、扫描间隔、竖屏阈值等设置。
+按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`blockDisplayMode`，各类型可用 `displayModeInfo/AD/TName/CM/Vertical` 覆盖)、网络拦截(`flagNetworkIntercept`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关，以及标签缓存清除、悬停延迟、扫描间隔、竖屏阈值等设置。
 
 ### 正则表达式（正则匹配标签页）
 
@@ -250,7 +250,7 @@ npm run dev
 
 ### 插件配置（面板内「插件配置」标签页）
 
-按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`flagKirby`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关，以及标签缓存清除、悬停延迟、扫描间隔、竖屏阈值等设置。
+按标题/UP主名(`flagInfo`)、广告(`flagAD`)、分类标签(`flagTName`)、cm软广(`flagCM`)、竖屏(`flagVertical`)、遮挡模式(`blockDisplayMode`，各类型可用 `displayModeInfo/AD/TName/CM/Vertical` 覆盖)、网络拦截(`flagNetworkIntercept`)、悬停临时显示(`flagHoverReveal`)、自动连播处理(`flagSkipBlockedAutoplay`) 等开关，以及标签缓存清除、悬停延迟、扫描间隔、竖屏阈值等设置。
 
  —— 以“官方”结尾
   - `华为|荣耀` —— 或匹配

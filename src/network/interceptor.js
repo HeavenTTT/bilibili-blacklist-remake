@@ -17,12 +17,13 @@
  */
 var NET_INTERCEPT = {
   enabled: false,
-  rewrite: false,   // true=命中后删除黑名单条目再交给页面；false=只读观察
-  // 后续填 B 站推荐 / 相关接口的关键字（命中才处理）
+  rewrite: true,   // true=命中后删除黑名单条目再交给页面；false=只读观察
+  // B 站推荐 / 相关接口关键字（命中才处理）
   urlPatterns: [
-    // "/x/web-interface/wbi/index/top/feed/rcmd",
-    // "/x/web-interface/wbi/index/feed",
-    // "/x/web-interface/archive/related"
+    "/x/web-interface/wbi/index/top/feed/rcmd",
+    "/x/web-interface/wbi/index/feed",
+    "/x/web-interface/wbi/index/web/feed/rcmd",
+    "/x/web-interface/archive/related"
   ],
   // 页面上下文的全局对象（优先 unsafeWindow）
   page: (typeof unsafeWindow !== "undefined") ? unsafeWindow : window
@@ -48,8 +49,52 @@ function netUrlMatches(url) {
  * @returns {string}             交给页面的响应文本（当前原样返回）
  */
 function rewriteRecommendation(url, responseText) {
-  // TODO: 解析 JSON，删除黑名单条目（bvid / UP 名 / 标题匹配）后重新序列化
-  return responseText;
+  try {
+    var parsed = JSON.parse(responseText);
+    if (!parsed || typeof parsed !== "object") return responseText;
+
+    // 推荐流：data.item 数组（wbi/index/top/feed/rcmd、wbi/index/feed）
+    if (parsed.data && Array.isArray(parsed.data.item)) {
+      var before = parsed.data.item.length;
+      parsed.data.item = parsed.data.item.filter(function (item) {
+        if (!item) return true;
+        var upName = (item.owner && item.owner.name) || "";
+        var title = item.title || "";
+        if (!upName && !title) return true;
+        return !isBlacklisted(upName, title);
+      });
+      if (parsed.data.item.length !== before) {
+        console.log(
+          "[🫥BlackList] 网络拦截: 推荐流已过滤 " +
+          (before - parsed.data.item.length) + " 条"
+        );
+      }
+      return JSON.stringify(parsed);
+    }
+
+    // 相关推荐：data 本身是数组（archive/related）
+    if (Array.isArray(parsed.data)) {
+      var countBefore = parsed.data.length;
+      parsed.data = parsed.data.filter(function (item) {
+        if (!item) return true;
+        var upName = (item.owner && item.owner.name) || "";
+        var title = item.title || "";
+        if (!upName && !title) return true;
+        return !isBlacklisted(upName, title);
+      });
+      if (parsed.data.length !== countBefore) {
+        console.log(
+          "[🫥BlackList] 网络拦截: 相关推荐已过滤 " +
+          (countBefore - parsed.data.length) + " 条"
+        );
+      }
+      return JSON.stringify(parsed);
+    }
+
+    return JSON.stringify(parsed);
+  } catch (e) {
+    return responseText;
+  }
 }
 
 /**

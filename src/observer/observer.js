@@ -44,8 +44,10 @@ const contentObserver = new MutationObserver((mutations) => {
     if (isCurrentPageMain()) fixMainPageLayout();
   }
 
+  // 顶栏管理按钮若被 B 站重渲染顶掉，这里兜底重新挂载（函数内部有幂等判断）
   // 广告屏蔽（适度延迟合并，避免频繁）
   setTimeout(() => {
+    addBlacklistManagerButton();
     if (isCurrentPageMain()) blockMainPageAds();
     if (isCurrentPageVideo()) blockVideoPageAds();
   }, globalPluginConfig.blockScanInterval);

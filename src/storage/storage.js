@@ -23,13 +23,39 @@ let regexMatchBlacklist = GM_getValue("regexBlacklist", [
 // 默认标签名黑名单
 let tagNameBlacklist = GM_getValue("tNameBlacklist", []);
 
+// 一次性合并旧版黑名单（数据来自 test/testBlackList.json，自动生成于 migration-data.js）
+if (!GM_getValue("migratedOldBlacklistV1", false)) {
+  const unionLists = (a, b) => {
+    const set = new Set(a || []);
+    (b || []).forEach((x) => set.add(x));
+    return Array.from(set);
+  };
+  exactMatchBlacklist = unionLists(exactMatchBlacklist, OLD_BLACKLIST_DATA.exactBlacklist);
+  regexMatchBlacklist = unionLists(regexMatchBlacklist, OLD_BLACKLIST_DATA.regexBlacklist);
+  tagNameBlacklist = unionLists(tagNameBlacklist, OLD_BLACKLIST_DATA.tNameBlacklist);
+  saveBlacklistsToStorage();
+  GM_setValue("migratedOldBlacklistV1", true);
+  console.log(
+    "[🫥BlackList] 已合并旧版黑名单（精确:" + exactMatchBlacklist.length +
+    " 正则:" + regexMatchBlacklist.length + " 分类:" + tagNameBlacklist.length + "）"
+  );
+}
+
 // 从存储中获取全局配置，并为旧版本配置补充新增字段
 const defaultGlobalPluginConfig = {
   flagInfo: true, // 启用/禁用按UP主名/标题屏蔽
   flagAD: true, // 启用/禁用屏蔽一般广告
   flagTName: true, // 启用/禁用按标签名屏蔽（需要API调用）
   flagCM: true, // 启用/禁用屏蔽cm.bilibili.com软广
-  flagKirby: true, // 启用/禁用被屏蔽视频的卡比覆盖模式
+  blockDisplayMode: "kirby", // 全局遮挡模式：blur=模糊遮盖 / kirby=模糊遮盖加卡比 / hide=隐藏卡片
+  // 各屏蔽类型独立行为（inherit=继承全局）
+  displayModeInfo: "inherit",
+  displayModeAD: "inherit",
+  displayModeTName: "inherit",
+  displayModeCM: "inherit",
+  displayModeVertical: "inherit",
+  flagHeaderButton: true, // 是否在顶栏显示管理按钮（油猴菜单可切换）
+  flagNetworkIntercept: true, // 是否启用网络拦截（推荐接口改写；已验证不影响排版）
   flagHoverReveal: false, // 启用/禁用悬停后临时显示被遮挡视频
   hoverRevealDelaySeconds: 1, // 悬停显示延迟（秒）
   processQueueInterval: 200, // 处理队列中单个卡片的延迟时间（毫秒）
@@ -61,6 +87,55 @@ const AUTOPLAY_SKIP_MODES = ["skip", "stop", "off"];
 if (!AUTOPLAY_SKIP_MODES.includes(globalPluginConfig.flagSkipBlockedAutoplay)) {
   globalPluginConfig.flagSkipBlockedAutoplay =
     defaultGlobalPluginConfig.flagSkipBlockedAutoplay;
+}
+
+// 校验/修复数值型配置：防止历史测试或手改写入过小/过大的值
+const clampNumber = (value, min, max, fallback) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? Math.min(max, Math.max(min, num)) : fallback;
+};
+globalPluginConfig.blockScanInterval = clampNumber(
+  globalPluginConfig.blockScanInterval,
+  10,
+  5000,
+  defaultGlobalPluginConfig.blockScanInterval
+);
+globalPluginConfig.processQueueInterval = clampNumber(
+  globalPluginConfig.processQueueInterval,
+  5,
+  10000,
+  defaultGlobalPluginConfig.processQueueInterval
+);
+globalPluginConfig.verticalScaleThreshold = clampNumber(
+  globalPluginConfig.verticalScaleThreshold,
+  0.1,
+  1,
+  defaultGlobalPluginConfig.verticalScaleThreshold
+);
+
+// 旧版 flagKirby(布尔) 迁移为 blockDisplayMode
+if (
+  globalPluginConfig.blockDisplayMode === undefined &&
+  typeof globalPluginConfig.flagKirby === "boolean"
+) {
+  globalPluginConfig.blockDisplayMode = globalPluginConfig.flagKirby ? "kirby" : "hide";
+}
+// 校验遮挡模式取值
+const DISPLAY_MODES = ["blur", "kirby", "hide"];
+if (!DISPLAY_MODES.includes(globalPluginConfig.blockDisplayMode)) {
+  globalPluginConfig.blockDisplayMode = defaultGlobalPluginConfig.blockDisplayMode;
+}
+const PER_TYPE_DISPLAY_KEYS = [
+  "displayModeInfo",
+  "displayModeAD",
+  "displayModeTName",
+  "displayModeCM",
+  "displayModeVertical",
+];
+for (const key of PER_TYPE_DISPLAY_KEYS) {
+  if (!["inherit"].concat(DISPLAY_MODES).includes(globalPluginConfig[key])) {
+    globalPluginConfig[key] = "inherit";
+  }
 }
 
 // 将黑名单保存到存储中
