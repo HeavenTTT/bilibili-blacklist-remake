@@ -1,5 +1,5 @@
 # 构建产物
-/dist/
+#/dist/
 
 # 依赖 / 虚拟环境
 node_modules/
@@ -10,3 +10,4 @@ node_modules/
 *.log
 test/testBlackList.json
 TEST_FLOW.md
+videotest.md

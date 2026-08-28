@@ -98,21 +98,18 @@ function rewriteRecommendation(url, responseText) {
 }
 
 /**
- * Fetch 命中后的回调（只读，用于观察 / 调试）。
+ * Fetch 命中后的回调（只读）。
  * @param {string} url           请求 URL
  * @param {string} responseText  响应文本
  */
-function onFetch(url, responseText) {
-  // TODO: 观察 / 记录推荐接口数据结构
-}
+function onFetch(url, responseText) {}
 
 /**
- * XHR 命中后的回调（只读，用于观察 / 调试）。
+ * XHR 命中后的回调（只读）。
  * @param {string} url           请求 URL
  * @param {string} responseText  响应文本
  */
 function onXhr(url, responseText) {
-  // TODO: 观察 / 记录推荐接口数据结构
 }
 
 /**

@@ -2,8 +2,8 @@
   "userscript": {
     "name": "Bilibili-BlackList Remake",
     "namespace": "https://github.com/HeavenTTT/bilibili-blacklist",
-    "author": "HeavenTTT",
-    "description": "Bilibili-BlackList 完全重写版：观察 B 站视频卡片并提取 标题 / UP 主名字 / bvid。",
+    "author": "DeepSeek Harness (AI)",
+    "description": "Bilibili-BlackList 完全重写版：观察 B 站视频卡片并提取 标题 / UP 主名字 / bvid。本插件由 AI（DeepSeek Harness）编写，免责声明见 README。",
     "icon": "https://www.bilibili.com/favicon.ico",
     "match": [
       "*://*.bilibili.com/*"
@@ -23,7 +23,6 @@
     "outputDir": "dist",
     "outputBase": "bilibili-blacklist-remake.user.js",
     "modules": [
-      "src/storage/migration-data.js",
       "src/storage/storage.js",
       "src/utils/utils.js",
       "src/core/core.js",
@@ -35,6 +34,9 @@
       "src/autoplay/autoplay.js",
       "src/network/interceptor.js",
       "src/main.js"
+    ],
+    "devModules": [
+      "src/debug/dev-test.js"
     ]
   }
 }

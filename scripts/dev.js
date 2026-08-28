@@ -44,7 +44,7 @@ function pkgName() {
 /* ---------------- 构建 ---------------- */
 function build() {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(ROOT, 'build.js')], {
+    const child = spawn(process.execPath, [path.join(ROOT, 'build.js'), '--dev'], {
       cwd: ROOT,
       stdio: 'inherit',
     });
@@ -154,6 +154,7 @@ function startServer() {
     console.log('\n==============================================');
     console.log('[dev] 本地服务器已启动:   http://localhost:' + PORT);
     console.log('[dev] 构建产物地址:       ' + BUILD_URL);
+    console.log('[dev] 构建类型: dev（注入调试/测试入口，仅开发环境生效）');
     console.log('[dev] 油猴加载器(装一次): ' + LOADER_URL);
     console.log('[dev] 流程: 改代码 -> 自动重建 -> 刷新页面');
     console.log('==============================================\n');

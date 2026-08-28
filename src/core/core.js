@@ -26,6 +26,10 @@ let countBlockTName = 0; // 已屏蔽标签名计数
 let countBlockVertical = 0; // 已屏蔽竖屏计数
 let countBlockCM = 0; // 已屏蔽cm.bilibili.com软广计数
 
+// “未处理”卡片：进入视频页时先用 CSS filter 遮盖（不插按钮/kirby 遮罩子元素），
+// 避免与 B 站 header 渲染竞争。该 WeakSet 记录已加 filter 的卡片，判定完成后清除。
+const pendingFilterCards = new WeakSet();
+
 // 用于不同页面UP主名称选择器
 // 注意：把具体/作者专用的选择器排在前面，`.name` 这类宽泛选择器放最后作兜底，
 // 避免在视频播放页等结构里优先匹配到“游戏名/标签/评论者”等非 UP 名的 `.name`。
@@ -120,6 +124,43 @@ function addBlockContainerToCard(upName, cardElement) {
     container.appendChild(blockButton);
   }
   return container;
+}
+
+/**
+ * 给一张卡片应用“未处理”filter 遮盖（模糊 2px + 灰度 20%）。
+ * 只修改卡片元素的 style.filter，不插入任何按钮/遮罩子元素 —— 避免与 B 站 header
+ * 的 Vue 渲染竞争。记录到 pendingFilterCards（WeakSet），判定完成后由 clearPendingFilter 清除。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ */
+function applyPendingFilter(cardElement) {
+  if (!cardElement) return;
+  const real = getRealVideoCardElement(cardElement);
+  if (!real) return;
+  if (pendingFilterCards.has(real)) return; // 已遮盖，避免重复
+  pendingFilterCards.add(real);
+  real.style.filter = "blur(2px) grayscale(0.2)";
+}
+
+/**
+ * 清除一张卡片的“未处理”filter 遮盖，恢复原样。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ */
+function clearPendingFilter(cardElement) {
+  if (!cardElement) return;
+  const real = getRealVideoCardElement(cardElement);
+  if (!real) return;
+  pendingFilterCards.delete(real);
+  real.style.filter = "";
+}
+
+/**
+ * 把当前页面已渲染的所有视频卡片标记为“未处理”（应用 filter 遮盖）。
+ * 用于视频页进入时：立即遮住推荐卡片，但不启动观察器/不判定，规避 header 渲染竞争。
+ */
+function markAllVideoCardsPending() {
+  const cards = queryAllVideoCards();
+  if (!cards) return;
+  cards.forEach((card) => applyPendingFilter(card));
 }
 
 /**
@@ -291,21 +332,18 @@ function processCard(card) {
   }
   const realCard = getRealVideoCardElement(card);
 
-  // --- 根据 flagHideOnLoad 开关决定是否立即隐藏卡片 ---
-  // 立即隐藏“所有”新卡片（不只命中黑名单的，也不只已成功解析 UP名/标题的）：
-  // 防止 tname/竖屏 API 稍后返回再隐藏卡片导致的重排与“先显示后隐藏”的闪烁。
-  // 用 visibility:hidden 保留布局空间，恢复显示时不产生位移；后续队列处理后再决定：
-  // 未命中 → 恢复显示；命中 → 保持隐藏/加遮罩。
-  // 注意：即使此刻还没解析出 UP名/标题（未创建屏蔽按钮），也要先隐藏，
-  // 否则这类卡片会先冒出、稍后再被判定隐藏，造成闪烁。
+  // --- 未处理阶段：先用 CSS filter 遮盖（模糊2px+灰度20%）---
+  // 不往卡片插入按钮/kirby 遮罩子元素、不改 visibility，避免与 B 站 header 的 Vue 渲染竞争
+  // 卡片先处于“未处理”状态，待队列判定后再提交：
+  //   命中 → hideVideoCard（正式遮蔽）+ clearPendingFilter；未命中 → clearPendingFilter（去 filter 恢复）。
   if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos && realCard) {
-    realCard.style.visibility = "hidden";
+    applyPendingFilter(card);
   }
-  // --- 立即隐藏卡片的逻辑结束 ---
 
   const { upName, videoTitle } = getVideoCardInfo(card);
   // 只要解析到 UP 主名称就添加“屏蔽”按钮（按钮按 UP 名屏蔽，不需要标题；
   // 有些卡片标题解析失败但仍可通过 UP 名手动屏蔽，避免“按钮缺失导致无法屏蔽”）。
+  // 视频页 header 正常后才由 scanAndBlockVideoCards 触发，此时插入按钮不再干扰 header。
   if (upName && realCard) {
     addBlockContainerToCard(upName, card);
   }

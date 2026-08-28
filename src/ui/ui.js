@@ -190,13 +190,18 @@ function initTampermonkeyMenu() {
 
 /**
  * 更新已屏蔽视频的显示计数。
+ * 视频页在顶栏(.right-entry)尚未就绪时，不写入顶栏元素（避免与 B 站 header
+ * 渲染竞争导致 header 被顶掉）；计数变量照常更新，顶栏就绪后由 pages.js 补一次 refresh。
  */
 function refreshBlockCountDisplay() {
-  if (blockCountDisplayElement) {
-    blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
-  }
-  if (blockCountTitleElement) {
-    blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVertical})`;
+  const headerNotReady = isCurrentPageVideo() && !videoHeaderReady;
+  if (!headerNotReady) {
+    if (blockCountDisplayElement) {
+      blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
+    }
+    if (blockCountTitleElement) {
+      blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVertical})`;
+    }
   }
 }
 
@@ -690,6 +695,14 @@ function refreshConfigSettings() {
       { min: 0, max: 1, step: 0.05 }
     )
   );
+
+  // 免责声明 + AI 作者（展示在插件配置页底部，随插件一起可见）
+  const disclaimer = document.createElement("div");
+  disclaimer.className = "bilibili-blacklist-disclaimer";
+  disclaimer.textContent =
+    "免责声明：本插件由 AI（DeepSeek Harness）自动编写，并非人工逐行开发；" +
+    "使用前请自行评估风险。作者：DeepSeek Harness (AI)。";
+  configListElement.appendChild(disclaimer);
 }
 
 /**
@@ -1166,6 +1179,18 @@ GM_addStyle(`
     text-align: center;
     padding: 16px;
     color: #999;
+  }
+
+  /* 免责声明（配置页底部） */
+  .bilibili-blacklist-disclaimer {
+    margin-top: 16px;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #888;
+    border-top: 1px dashed #e0e0e0;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 4px;
   }
 
   /* 按钮 */

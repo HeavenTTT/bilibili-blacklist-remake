@@ -197,7 +197,6 @@ async function processVideoCardQueue() {
               data.tname_v2,
               card
             ) || hasTname;
-            // 临时修复：仅用 tid_v2 查本地标签名
             if (data.tid_v2) {
               const obj = getTagNameById(data.tid_v2);
               if (obj) {
@@ -213,7 +212,6 @@ async function processVideoCardQueue() {
                 ) || hasTname;
               }
             }
-            // 临时修复结束
             if (hasTname) {
               container.appendChild(tnameGroup);
               tnameResolved = true;
@@ -265,8 +263,12 @@ async function processVideoCardQueue() {
     }
 
     if (shouldHide) {
+      // 命中：先去掉“未处理”filter 遮盖，再走正式遮蔽（hide / kirby 遮罩 / 模糊）
+      clearPendingFilter(card);
       hideVideoCard(card, blockType);
     } else {
+      // 未命中：去掉“未处理”filter 遮盖，恢复原样显示
+      clearPendingFilter(card);
       const realCardToDisplay = getRealVideoCardElement(card);
       if (realCardToDisplay && blockedVideoCards.has(realCardToDisplay)) {
         blockedVideoCards.delete(realCardToDisplay);
@@ -275,7 +277,7 @@ async function processVideoCardQueue() {
       removeKirbyOverlay(card); // 幂等：清理可能残留的遮罩（不再依赖 flagKirby）
       if (realCardToDisplay) {
         realCardToDisplay.style.display = "block";
-        realCardToDisplay.style.visibility = "visible"; // 取消立即隐藏阶段的 visibility:hidden
+        realCardToDisplay.style.visibility = "visible"; // 取消未处理阶段的遮盖（若有）
       }
     }
 
