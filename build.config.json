@@ -23,7 +23,6 @@
     "outputDir": "dist",
     "outputBase": "bilibili-blacklist-remake.user.js",
     "modules": [
-      "src/storage/migration-data.js",
       "src/storage/storage.js",
       "src/utils/utils.js",
       "src/core/core.js",

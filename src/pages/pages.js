@@ -111,8 +111,7 @@ function isCurrentPageVideo() {
 /**
  * 初始化视频播放页特有的功能。
  *
- * [解耦重构] 策略：
- *   进入视频页时【不碰卡片 DOM、不启动观察器】，只把当前已渲染的推荐卡片标记为
+ * 进入视频页时
  *   “未处理”状态（用 CSS filter 遮盖，不插入按钮/kirby 遮罩子元素，避免与 B 站 header
  *   的 Vue 渲染竞争 → 导致 header 被顶掉）。视频正常播放。
  *   等右侧导航栏 .right-entry 渲染完成（header 完全正常）后，再统一启动：观察器 +
@@ -141,7 +140,7 @@ function initializeVideoPage() {
 }
 
 /**
- * [解耦] 视频页在 header 完全正常后启动的完整处理：观察器 + 首次扫描 + 广告 + 连播 + 补扫。
+ * 视频页在 header 完全正常后启动的完整处理：观察器 + 首次扫描 + 广告 + 连播 + 补扫。
  * @param {string} flag - 进入时的 flagSkipBlockedAutoplay 值（用于处理完恢复）
  */
 function startVideoPageProcessing(flag) {

@@ -1,5 +1,5 @@
 # 构建产物
-/dist/
+#/dist/
 
 # 依赖 / 虚拟环境
 node_modules/

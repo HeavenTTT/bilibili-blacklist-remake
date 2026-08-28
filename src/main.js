@@ -2,13 +2,11 @@
  * 主入口模块
  * -----------------------------------------------------------
  * 页面功能初始化在 src/pages/pages.js（分页初始化 + 管理面板）。
- * 本文件负责：当构建在 DOMContentLoaded 之后、load 之前被注入时，
- * 在所有模块求值完毕后立即初始化一次（兼容 dev 加载器的晚注入场景）。
- * 调试/测试入口已迁移到 src/debug/dev-test.js，仅随 dev 构建注入，
- * 发布构建（npm run build）不会包含任何测试方法。
+ * 本文件负责：在文档已就绪而 DOMContentLoaded 事件已错过时，
+ * 于全部模块求值完毕后立即初始化一次。
  */
 
-// 兼容 dev 加载器晚注入：当构建在 DOMContentLoaded 之后、load 之前被 eval 时
+// 当构建在 DOMContentLoaded 之后、load 之前被注入时
 // （document.readyState === "interactive"/"complete"），上面的 DOMContentLoaded 监听已错过，
 // 需要在全部模块求值完毕后立即初始化一次。
 // 注意：必须放在本 IIFE 的最后。initializeScript() 会依赖 interceptor.js 的 NET_INTERCEPT、

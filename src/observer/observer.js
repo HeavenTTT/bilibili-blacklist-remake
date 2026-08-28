@@ -8,7 +8,6 @@
 // 增量观察：只处理“新插入”的卡片，不做全量重扫
 const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
 const seenCards = new WeakSet();
-// [Plan C] 视频页顶栏(.right-entry)是否已就绪：就绪前不写顶栏元素（避免与 B 站 header 渲染竞争）
 let videoHeaderReady = false;
 
 const contentObserver = new MutationObserver((mutations) => {
@@ -93,18 +92,29 @@ function initializeObserver(containerIdOrSelector) {
     return;
   }
 
-  // 容器尚未挂载（典型：视频播放页右侧推荐 #right-container 延迟渲染）。
-  // 不再回退观察 documentElement —— 那会观察整个文档，与 B 站顶栏的 Vue 渲染竞争，
-  // 导致 header 被顶掉/不可见。改为等待容器出现后再观察；等待期间由各页面已有的
-  // 定时补扫（视频页 2.5s、主页/搜索页 800ms 等）兜底，不会漏掉卡片。
-  console.log(
-    "[🫥BlackList] 观察容器尚未挂载，等待其出现后再观察（避免回退整页干扰 header）:",
-    containerIdOrSelector
-  );
-  waitForContainer(containerIdOrSelector, (el) => {
-    contentObserver.observe(el, {
-      childList: true,
-      subtree: true,
+  // 容器尚未挂载时按页面区分处理：
+  // - 视频播放页：为避免与 B 站顶栏的 Vue 渲染竞争（把 header 顶掉），保持
+  //   “等待容器出现后再观察”，不回退整页；等待期间由视频页自身的 2.5s 定期补扫兜底。
+  // - 其它页面（主页/搜索页/分类页/排行榜等）：不需要这种特殊处理。主页与搜索页
+  //   只有一次性的 800ms 补扫，若容器 id 与当前 B 站 DOM 不一致，观察器若一直等待
+  //   就会漏掉滚动加载/翻页出现的新卡片，因此直接回退观察整篇文档，保证新卡片被捕获。
+  if (isCurrentPageVideo()) {
+    console.log(
+      "[🫥BlackList] 观察容器尚未挂载，等待其出现后再观察（避免回退整页干扰 header）:",
+      containerIdOrSelector
+    );
+    waitForContainer(containerIdOrSelector, (el) => {
+      contentObserver.observe(el, {
+        childList: true,
+        subtree: true,
+      });
     });
+    return;
+  }
+
+  // 非视频页：回退观察整篇文档，避免漏掉动态插入的新卡片。
+  contentObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
   });
 }

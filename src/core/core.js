@@ -26,7 +26,7 @@ let countBlockTName = 0; // 已屏蔽标签名计数
 let countBlockVertical = 0; // 已屏蔽竖屏计数
 let countBlockCM = 0; // 已屏蔽cm.bilibili.com软广计数
 
-// [解耦] “未处理”卡片：进入视频页时先用 CSS filter 遮盖（不插按钮/kirby 遮罩子元素），
+// “未处理”卡片：进入视频页时先用 CSS filter 遮盖（不插按钮/kirby 遮罩子元素），
 // 避免与 B 站 header 渲染竞争。该 WeakSet 记录已加 filter 的卡片，判定完成后清除。
 const pendingFilterCards = new WeakSet();
 
@@ -127,7 +127,7 @@ function addBlockContainerToCard(upName, cardElement) {
 }
 
 /**
- * [解耦] 给一张卡片应用“未处理”filter 遮盖（模糊 2px + 灰度 20%）。
+ * 给一张卡片应用“未处理”filter 遮盖（模糊 2px + 灰度 20%）。
  * 只修改卡片元素的 style.filter，不插入任何按钮/遮罩子元素 —— 避免与 B 站 header
  * 的 Vue 渲染竞争。记录到 pendingFilterCards（WeakSet），判定完成后由 clearPendingFilter 清除。
  * @param {HTMLElement} cardElement - 视频卡片元素。
@@ -142,7 +142,7 @@ function applyPendingFilter(cardElement) {
 }
 
 /**
- * [解耦] 清除一张卡片的“未处理”filter 遮盖，恢复原样。
+ * 清除一张卡片的“未处理”filter 遮盖，恢复原样。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  */
 function clearPendingFilter(cardElement) {
@@ -154,7 +154,7 @@ function clearPendingFilter(cardElement) {
 }
 
 /**
- * [解耦] 把当前页面已渲染的所有视频卡片标记为“未处理”（应用 filter 遮盖）。
+ * 把当前页面已渲染的所有视频卡片标记为“未处理”（应用 filter 遮盖）。
  * 用于视频页进入时：立即遮住推荐卡片，但不启动观察器/不判定，规避 header 渲染竞争。
  */
 function markAllVideoCardsPending() {
@@ -332,9 +332,9 @@ function processCard(card) {
   }
   const realCard = getRealVideoCardElement(card);
 
-  // --- [解耦] 未处理阶段：先用 CSS filter 遮盖（模糊2px+灰度20%）---
+  // --- 未处理阶段：先用 CSS filter 遮盖（模糊2px+灰度20%）---
   // 不往卡片插入按钮/kirby 遮罩子元素、不改 visibility，避免与 B 站 header 的 Vue 渲染竞争
-  //（这正是此前“视频页 header 被顶掉”的原因）。卡片先处于“未处理”状态，待队列判定后再提交：
+  // 卡片先处于“未处理”状态，待队列判定后再提交：
   //   命中 → hideVideoCard（正式遮蔽）+ clearPendingFilter；未命中 → clearPendingFilter（去 filter 恢复）。
   if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos && realCard) {
     applyPendingFilter(card);

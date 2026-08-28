@@ -102,7 +102,6 @@
   （已移到 main.js 末尾）；新增排行榜页初始化；主页/搜索/分类页延迟补扫；视频页恢复 2.5s 定时补扫。
 - `src/observer/observer.js`：定时兜底重挂 `addBlacklistManagerButton()`。
 - `build.config.json`：`@grant` 增加 `GM_registerMenuCommand`；模块列表加入
-  `src/storage/migration-data.js`。
 - `scripts/dev.js`：默认双栈监听 `::`，展示地址用 `localhost`。
 - `test/bilibili-blacklist-remake.dev.user.js`：`127.0.0.1`/localhost 交替 + 最多 6 次重试 +
   页面角标诊断；`@grant` 增加 `GM_registerMenuCommand`。

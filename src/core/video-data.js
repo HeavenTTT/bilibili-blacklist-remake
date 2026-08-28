@@ -197,7 +197,6 @@ async function processVideoCardQueue() {
               data.tname_v2,
               card
             ) || hasTname;
-            // 临时修复：仅用 tid_v2 查本地标签名
             if (data.tid_v2) {
               const obj = getTagNameById(data.tid_v2);
               if (obj) {
@@ -213,7 +212,6 @@ async function processVideoCardQueue() {
                 ) || hasTname;
               }
             }
-            // 临时修复结束
             if (hasTname) {
               container.appendChild(tnameGroup);
               tnameResolved = true;

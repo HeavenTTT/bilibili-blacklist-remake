@@ -23,23 +23,6 @@ let regexMatchBlacklist = GM_getValue("regexBlacklist", [
 // 默认标签名黑名单
 let tagNameBlacklist = GM_getValue("tNameBlacklist", []);
 
-// 一次性合并旧版黑名单（数据来自 test/testBlackList.json，自动生成于 migration-data.js）
-if (!GM_getValue("migratedOldBlacklistV1", false)) {
-  const unionLists = (a, b) => {
-    const set = new Set(a || []);
-    (b || []).forEach((x) => set.add(x));
-    return Array.from(set);
-  };
-  exactMatchBlacklist = unionLists(exactMatchBlacklist, OLD_BLACKLIST_DATA.exactBlacklist);
-  regexMatchBlacklist = unionLists(regexMatchBlacklist, OLD_BLACKLIST_DATA.regexBlacklist);
-  tagNameBlacklist = unionLists(tagNameBlacklist, OLD_BLACKLIST_DATA.tNameBlacklist);
-  saveBlacklistsToStorage();
-  GM_setValue("migratedOldBlacklistV1", true);
-  console.log(
-    "[🫥BlackList] 已合并旧版黑名单（精确:" + exactMatchBlacklist.length +
-    " 正则:" + regexMatchBlacklist.length + " 分类:" + tagNameBlacklist.length + "）"
-  );
-}
 
 // 从存储中获取全局配置，并为旧版本配置补充新增字段
 const defaultGlobalPluginConfig = {
@@ -89,7 +72,7 @@ if (!AUTOPLAY_SKIP_MODES.includes(globalPluginConfig.flagSkipBlockedAutoplay)) {
     defaultGlobalPluginConfig.flagSkipBlockedAutoplay;
 }
 
-// 校验/修复数值型配置：防止历史测试或手改写入过小/过大的值
+// 校验/修复数值型配置：防止历史配置或手改写入过小/过大的值
 const clampNumber = (value, min, max, fallback) => {
   const num = Number(value);
   return Number.isFinite(num) ? Math.min(max, Math.max(min, num)) : fallback;
