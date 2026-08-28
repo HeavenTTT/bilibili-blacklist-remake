@@ -35,6 +35,7 @@ function blockVideoPageAds() {
     ".btn-ad", // 广告按钮
     ".video-page-operator-card-small", // 运营推广
     ".ad-report",//广告
+    ".slide_ad",//广告
   ];
 
   adSelectors.forEach((selector) => {

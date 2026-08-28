@@ -190,13 +190,18 @@ function initTampermonkeyMenu() {
 
 /**
  * 更新已屏蔽视频的显示计数。
+ * [Plan C] 视频页在顶栏(.right-entry)尚未就绪时，不写入顶栏元素（避免与 B 站 header
+ * 渲染竞争导致 header 被顶掉）；计数变量照常更新，顶栏就绪后由 pages.js 补一次 refresh。
  */
 function refreshBlockCountDisplay() {
-  if (blockCountDisplayElement) {
-    blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
-  }
-  if (blockCountTitleElement) {
-    blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVertical})`;
+  const headerNotReady = isCurrentPageVideo() && !videoHeaderReady;
+  if (!headerNotReady) {
+    if (blockCountDisplayElement) {
+      blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
+    }
+    if (blockCountTitleElement) {
+      blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVertical})`;
+    }
   }
 }
 
