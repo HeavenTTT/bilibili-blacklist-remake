@@ -77,6 +77,7 @@ function stripComments(code) {
   let lineHadContent = false;    // 进入行注释前 hasContent 的快照
   let blockHadContent = false;   // 进入块注释前 hasContent 的快照
   let skipNextNewline = false;   // 块注释结束后是否跳过下一个换行
+  let lineStart = 0;             // 当前行在输出 out 中的起始位置（用于清掉独立注释行的缩进/行尾空白）
 
   function isWhitespace(c) {
     return c === ' ' || c === '\t' || c === '\r' || c === '\n';
@@ -90,6 +91,16 @@ function stripComments(code) {
       if (c === '/' && next === '/') {
         // 进入行注释，记录当前行是否有内容
         lineHadContent = hasContent;
+        if (!lineHadContent && out.length > lineStart) {
+          // 独立注释行：其前导空白属于注释行本身，应随注释一起丢弃；
+          // 否则会残留成缩进噪音（连续注释行的空白还会叠加到下一行代码上，
+          // 例如配置对象里相邻两行注释会让下一行多出 4 个空格）。
+          out = out.slice(0, lineStart);
+        } else if (lineHadContent) {
+          // 行内注释（代码后跟 // 注释）：代码与注释之间的空白属于注释分隔符，
+          // 随注释一起移除，避免行尾残留空格
+          out = out.replace(/[ \t]+$/, '');
+        }
         state = 'line';
         i += 2;
         continue;
@@ -97,6 +108,12 @@ function stripComments(code) {
       if (c === '/' && next === '*') {
         // 进入块注释，记录当前行是否有内容
         blockHadContent = hasContent;
+        if (!blockHadContent && out.length > lineStart) {
+          // 独立块注释行同样丢弃其前导空白
+          out = out.slice(0, lineStart);
+        } else if (blockHadContent) {
+          out = out.replace(/[ \t]+$/, '');
+        }
         state = 'block';
         i += 2;
         continue;
@@ -128,10 +145,17 @@ function stripComments(code) {
           i++;
           // 换行被跳过，hasContent 应当重置（因为新行尚未开始）
           hasContent = false;
+          // 独立块注释行的行尾可能残留空白（如 "/* x */  "）：
+          // 本行自 lineStart 起只有空白则整体清掉；若后面还有代码则保留
+          if (out.slice(lineStart).trim() === '') {
+            out = out.slice(0, lineStart);
+          }
+          lineStart = out.length;
           continue;
         }
         out += c;
         hasContent = false; // 新行开始
+        lineStart = out.length;
         i++;
       } else {
         // 非换行普通字符
@@ -150,6 +174,11 @@ function stripComments(code) {
         } else {
           out += c;
           hasContent = false;
+          // 关键：行内注释行输出换行后必须同步 lineStart。
+          // 否则下一行若是独立注释行，其"前导空白截断"会按过期的 lineStart
+          // 把本行（以及更早的代码）一并删除 —— 曾导致 defaultGlobalPluginConfig
+          // 里带行内注释的配置项整段丢失。
+          lineStart = out.length;
         }
         state = 'normal';
         i++;
@@ -184,6 +213,11 @@ function stripComments(code) {
         out += (code[i + 1] || '');
         i += 2;
         continue;
+      }
+      // 模板字面量里的换行同样要同步 lineStart（内部含 CSS/SVG 多行内容，
+      // 若后面紧跟独立注释行，截断逻辑需要正确的行起点）
+      if (c === '\n') {
+        lineStart = out.length;
       }
       if (c === '`') {
         state = 'normal';

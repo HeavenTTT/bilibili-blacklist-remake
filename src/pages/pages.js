@@ -50,7 +50,6 @@ function initializeScript() {
     installNetworkInterceptors();
   }
   console.log("[🫥BlackList] 脚本已加载🥔");
-  
 }
 let isfirstLoad = true;// 监听DOMContentLoaded并检查readyState以进行早期初始化
 // initializeScript 内部已通过 isfirstLoad 保证只执行一次
@@ -207,7 +206,6 @@ function initializeVideoPage() {
   markVideoPageAdsPending();
 
   // 2) 等 header 完全正常（.right-entry 渲染完成）后再启动完整处理
-  
   videoHeaderReady = false;
   const timeout = setTimeout(() =>  waitForContainer(".right-entry", () => {
     videoHeaderReady = true;

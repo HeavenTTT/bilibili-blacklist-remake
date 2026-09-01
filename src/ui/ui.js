@@ -1310,7 +1310,6 @@ GM_addStyle(`
 
   #bilibili-blacklist-kirby.bilibili-blacklist-kirby-video {
     justify-content: flex-start;
-    
   }
 
   #bilibili-blacklist-kirby svg {
