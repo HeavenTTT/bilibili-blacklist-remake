@@ -72,6 +72,11 @@ const BLOCK_REASON_MAP = {
   vertical: "竖屏视频",
 };
 
+// info 类型中“正则匹配”的原因标记（区别于精确匹配 UP 名）。
+// 正则可能同时命中多条规则、无法定位具体是哪一条，因此不支持本卡放行，
+// 用这个哨兵值让按钮只展示原因、不可点击。
+const REGEX_BLOCK_VALUE = "__regex__";
+
 /**
  * 获取视频卡片上容器应挂载的宿主元素，并确保宿主可被绝对定位。
  * @param {HTMLElement} cardElement - 视频卡片元素。
@@ -197,13 +202,21 @@ function getEffectiveDisplayMode(type) {
   return globalPluginConfig.blockDisplayMode;
 }
 
-function hideVideoCard(cardElement, type = "none") {
+function hideVideoCard(cardElement, type = "none", reasonValue = null) {
   const realCardToBlock = getRealVideoCardElement(cardElement);
   if (!realCardToBlock) {
     console.warn(
       "[bililili-blacklist] hideVideoCard: realCardToBlock is null"
     );
     return;
+  }
+  // 解析具体屏蔽内容：未显式传入时按类型从卡片上推导（用于展示/取消）
+  if (reasonValue == null) {
+    if (type === "info") {
+      reasonValue = getVideoCardInfo(cardElement).upName;
+    } else if (type === "tname") {
+      reasonValue = getBlacklistedTagName(cardElement);
+    }
   }
   if (blockedVideoCards.has(realCardToBlock)) {
     return;
@@ -239,17 +252,118 @@ function hideVideoCard(cardElement, type = "none") {
     addDisplayOverlayToCard(cardElement, mode);
   }
 
-  setBlockReasonOnCard(cardElement, type);
+  setBlockReasonOnCard(cardElement, type, reasonValue);
+}
+
+/**
+ * 生成卡片屏蔽原因的显示文案（要求：屏蔽原因按钮显示具体的屏蔽内容）。
+ * - info 精确匹配：显示具体 UP 名；
+ * - info 正则匹配：无法定位具体规则，写明原因（不支持取消）；
+ * - tname：显示具体标签名；
+ * - 其余（cm/竖屏/广告）：显示类型文案（不支持取消）。
+ * @param {string} type - 屏蔽类型。
+ * @param {string|null} reasonValue - 具体内容（UP 名 / 标签名 / REGEX_BLOCK_VALUE）。
+ * @returns {string}
+ */
+function buildBlockReasonText(type, reasonValue) {
+  if (type === "info" && reasonValue === REGEX_BLOCK_VALUE) {
+    return "屏蔽原因: 正则匹配(无法定位具体规则,请在面板移除对应正则)";
+  }
+  if (type === "info" && reasonValue) {
+    return `屏蔽原因: UP: ${reasonValue}`;
+  }
+  if (type === "info") {
+    return "屏蔽原因: 标题/UP主名";
+  }
+  if (type === "tname" && reasonValue) {
+    return `屏蔽原因: 标签: ${reasonValue}`;
+  }
+  if (type === "tname") {
+    return "屏蔽原因: 分类标签";
+  }
+  return `屏蔽原因: ${BLOCK_REASON_MAP[type] || type}`;
+}
+
+/**
+ * 该原因是否支持“点击取消”（= 存在可删除的黑名单规则）。
+ * 只支持 info 精确匹配与 tname：点取消会把对应规则从黑名单删除；
+ * 正则无法定位具体规则，cm/竖屏/广告没有可删除的规则。
+ * @param {string} type - 屏蔽类型。
+ * @param {string|null} reasonValue - 具体内容。
+ * @returns {boolean}
+ */
+function isReasonCancellable(type, reasonValue) {
+  if (type === "info") {
+    return !!reasonValue && reasonValue !== REGEX_BLOCK_VALUE;
+  }
+  if (type === "tname") {
+    return !!reasonValue;
+  }
+  return false;
+}
+
+/**
+ * 取消某张卡片当前显示的屏蔽原因（仅支持 info 精确匹配 / tname）：
+ *   1. 把对应规则从黑名单中删除（精确 UP 名从 exactMatchBlacklist、标签从
+ *      tagNameBlacklist 移除）并持久化 —— 这就是“取消屏蔽”本身；
+ *   2. 只刷新这一张卡片：恢复显示、重新入队做完整判定 —— 若还有其它屏蔽原因
+ *      （其它 UP 名规则 / 正则 / 其它标签 / 软广 / 竖屏 / 广告）会继续屏蔽并刷新为新原因，
+ *      没有则保持显示。
+ * @param {HTMLElement} card - 视频卡片元素。
+ * @param {string} type - 屏蔽类型（info/tname）。
+ * @param {string} value - 具体内容（UP 名 / 标签名）。
+ */
+function cancelCardBlockReason(card, type, value) {
+  if (!card || !value) return;
+  if (type === "info") {
+    const idx = exactMatchBlacklist.findIndex(
+      (item) => item.toLowerCase() === String(value).toLowerCase()
+    );
+    if (idx === -1) return; // 规则已不存在，无需处理
+    exactMatchBlacklist.splice(idx, 1);
+    saveBlacklistsToStorage();
+    refreshExactMatchList();
+  } else if (type === "tname") {
+    const idx = tagNameBlacklist.indexOf(value);
+    if (idx === -1) return;
+    tagNameBlacklist.splice(idx, 1);
+    saveBlacklistsToStorage();
+    refreshTagNameList();
+  } else {
+    return; // 正则/cm/竖屏/广告 不支持
+  }
+
+  // 只刷新该卡片：恢复显示 + 重新入队完整判定。
+  // 判定期间用 pending 模糊作为“重新检查中”的视觉反馈。
+  clearPendingFilter(card);
+  const realCard = getRealVideoCardElement(card);
+  unmarkBlockedCard(realCard);
+  removeBlockReason(card);
+  removeKirbyOverlay(card);
+  if (realCard) {
+    realCard.style.display = "block";
+    realCard.style.visibility = "visible";
+  }
+  if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
+    applyPendingFilter(card);
+  }
+  processedVideoCards.delete(card);
+  videoCardProcessQueue.add(card);
+  if (!isVideoCardQueueProcessing && typeof processVideoCardQueue === "function") {
+    processVideoCardQueue();
+  }
+  refreshBlockCountDisplay();
 }
 
 /**
  * 在卡片的屏蔽按钮容器中设置屏蔽原因。
+ * 支持“一键取消”的原因（info 精确 / tname）渲染为可点击的取消按钮，
+ * 并展示具体屏蔽内容（UP 名 / 标签名）；其余类型仅展示原因文案。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  * @param {string} type - 屏蔽类型。
+ * @param {string|null} reasonValue - 具体内容（UP 名 / 标签名 / REGEX_BLOCK_VALUE）。
  */
-function setBlockReasonOnCard(cardElement, type) {
-  const reasonText = BLOCK_REASON_MAP[type];
-  if (!reasonText) return;
+function setBlockReasonOnCard(cardElement, type, reasonValue = null) {
   // 广告等卡片未经过 scanAndBlockVideoCards 流程，可能不存在容器，需确保创建。
   // 播放页广告位的 DOM 结构与视频卡片完全不同（没有 .card-box，且常依赖自身定位/浮动布局），
   // 走 ads.js 里独立的 ensureAdBlockContainer()，避免 getBlockContainerHost 的卡片专用分支。
@@ -261,6 +375,7 @@ function setBlockReasonOnCard(cardElement, type) {
     ? ensureAdBlockContainer(cardElement)
     : ensureBlockContainerOnCard(cardElement);
   if (!container) return;
+  container.classList.add("is-blocked"); // 有屏蔽原因 → 隐藏“屏蔽”按钮，只显示原因
   let reasonElement = container.querySelector(
     ".bilibili-blacklist-block-reason"
   );
@@ -277,7 +392,19 @@ function setBlockReasonOnCard(cardElement, type) {
       container.appendChild(reasonElement);
     }
   }
-  reasonElement.textContent = `屏蔽原因: ${reasonText}`;
+  const cancellable = isReasonCancellable(type, reasonValue);
+  reasonElement.textContent = buildBlockReasonText(type, reasonValue);
+  reasonElement.classList.toggle("is-cancellable", cancellable);
+  reasonElement.title = cancellable
+    ? "点击取消本卡屏蔽(仅当前视频,不影响黑名单规则)"
+    : "";
+  if (cancellable) {
+    reasonElement.dataset.blockType = type;
+    reasonElement.dataset.blockValue = reasonValue || "";
+  } else {
+    delete reasonElement.dataset.blockType;
+    delete reasonElement.dataset.blockValue;
+  }
 }
 
 /**
@@ -289,6 +416,7 @@ function removeBlockReason(cardElement) {
     ".bilibili-blacklist-block-container"
   );
   if (!container) return;
+  container.classList.remove("is-blocked");
   const reasonElement = container.querySelector(
     ".bilibili-blacklist-block-reason"
   );
@@ -575,11 +703,23 @@ function getVideoCardInfo(cardElement) {
  * @returns {boolean}
  */
 function isExactBlacklisted(upName) {
+  return !!getExactBlacklistMatch(upName);
+}
+
+/**
+ * 返回与 UP 名精确匹配的黑名单条目（用于显示具体原因与生成放行 key）。
+ * @param {string} upName - 要检查的UP主名称。
+ * @returns {string|null}
+ */
+function getExactBlacklistMatch(upName) {
   const lowerCaseUpName = (upName || "").toLowerCase();
-  if (!lowerCaseUpName) return false;
-  return exactMatchBlacklist.some(
-    (item) => item.toLowerCase() === lowerCaseUpName
-  );
+  if (!lowerCaseUpName) return null;
+  for (let i = 0; i < exactMatchBlacklist.length; i++) {
+    if (exactMatchBlacklist[i].toLowerCase() === lowerCaseUpName) {
+      return exactMatchBlacklist[i];
+    }
+  }
+  return null;
 }
 
 /**

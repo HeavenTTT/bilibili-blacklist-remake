@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Bilibili-BlackList Remake
 // @namespace   https://github.com/HeavenTTT/bilibili-blacklist
-// @version     0.7.7
+// @version     0.8.0
 // @author      DeepSeek Harness (AI)
 // @description Bilibili-BlackList 完全重写版：观察 B 站视频卡片并提取 标题 / UP 主名字 / bvid。本插件由 AI（DeepSeek Harness）编写，免责声明见 README。
 // @match       *://*.bilibili.com/*
@@ -19,7 +19,7 @@
 (function () {
   "use strict";
 
-let exactMatchBlacklist = GM_getValue("exactBlacklist", [
+let exactMatchBlacklist = GM_getValue("exactBlacklist", [
   "绝区零",
   "崩坏星穹铁道",
   "崩坏3",
@@ -155,7 +155,7 @@ function getTagNameByV2(name_v2) {
 const REGEX_FLAGS_ALLOWED = "dgimsuvy";
 const regexCache = new Map();   
 
-function parseRegexEntry(entry) {
+function parseRegexEntry(entry) {
   entry = String(entry == null ? "" : entry).trim();
   if (!entry) return null;
     if (entry.charAt(0) === "/") {
@@ -172,7 +172,7 @@ const regexCache = new Map();
     return { pattern: entry, flags: "i" };
 }
 
-function compileRegex(entry) {
+function compileRegex(entry) {
   if (regexCache.has(entry)) return regexCache.get(entry);
   let re = null;
   const parsed = parseRegexEntry(entry);
@@ -188,11 +188,11 @@ const regexCache = new Map();
   return re;
 }
 
-function invalidateRegexCache() {
+function invalidateRegexCache() {
   regexCache.clear();
 }
 
-function getTNameListFormVideoPage() {
+function getTNameListFormVideoPage() {
   try {
     var channelKv = unsafeWindow.__INITIAL_STATE__.channelKv;
     if (!channelKv) return [];
@@ -269,7 +269,7 @@ function updateTNameList() {
   }
 }
 
-let tempUnblockButton;
+let tempUnblockButton;
 let managerPanel;
 let exactMatchListElement;
 let regexMatchListElement;
@@ -322,7 +322,9 @@ const BLOCK_REASON_MAP = {
   vertical: "竖屏视频",
 };
 
-function getBlockContainerHost(cardElement) {
+const REGEX_BLOCK_VALUE = "__regex__";
+
+function getBlockContainerHost(cardElement) {
     if (isCurrentPageVideo()) {
     const cardBox = cardElement.querySelector(".card-box");
     if (cardBox) {
@@ -345,7 +347,7 @@ const BLOCK_REASON_MAP = {
   return cardElement;
 }
 
-function ensureBlockContainerOnCard(cardElement) {
+function ensureBlockContainerOnCard(cardElement) {
   const existing = cardElement.querySelector(
     ".bilibili-blacklist-block-container"
   );
@@ -357,7 +359,7 @@ const BLOCK_REASON_MAP = {
   return container;
 }
 
-function addBlockContainerToCard(upName, cardElement) {
+function addBlockContainerToCard(upName, cardElement) {
   const container = ensureBlockContainerOnCard(cardElement);
   if (!container.querySelector(".bilibili-blacklist-block-btn")) {
     const blockButton = createBlockUpButton(upName, cardElement);
@@ -366,7 +368,7 @@ const BLOCK_REASON_MAP = {
   return container;
 }
 
-function applyPendingFilter(cardElement) {
+function applyPendingFilter(cardElement) {
   if (!cardElement) return;
   const real = getRealVideoCardElement(cardElement);
   if (!real) return;
@@ -375,7 +377,7 @@ const BLOCK_REASON_MAP = {
   real.style.filter = PENDING_FILTER_STYLE;
 }
 
-function clearPendingFilter(cardElement) {
+function clearPendingFilter(cardElement) {
   if (!cardElement) return;
   const real = getRealVideoCardElement(cardElement);
   if (!real) return;
@@ -383,13 +385,13 @@ const BLOCK_REASON_MAP = {
   real.style.filter = "";
 }
 
-function markAllVideoCardsPending() {
+function markAllVideoCardsPending() {
   const cards = queryAllVideoCards();
   if (!cards) return;
   cards.forEach((card) => applyPendingFilter(card));
 }
 
-function getEffectiveDisplayMode(type) {
+function getEffectiveDisplayMode(type) {
   const perTypeMap = {
     info: globalPluginConfig.displayModeInfo,
     ad: globalPluginConfig.displayModeAD,
@@ -402,13 +404,20 @@ const BLOCK_REASON_MAP = {
   return globalPluginConfig.blockDisplayMode;
 }
 
-function hideVideoCard(cardElement, type = "none") {
+function hideVideoCard(cardElement, type = "none", reasonValue = null) {
   const realCardToBlock = getRealVideoCardElement(cardElement);
   if (!realCardToBlock) {
     console.warn(
       "[bililili-blacklist] hideVideoCard: realCardToBlock is null"
     );
     return;
+  }
+    if (reasonValue == null) {
+    if (type === "info") {
+      reasonValue = getVideoCardInfo(cardElement).upName;
+    } else if (type === "tname") {
+      reasonValue = getBlacklistedTagName(cardElement);
+    }
   }
   if (blockedVideoCards.has(realCardToBlock)) {
     return;
@@ -443,12 +452,79 @@ function hideVideoCard(cardElement, type = "none") {
     addDisplayOverlayToCard(cardElement, mode);
   }
 
-  setBlockReasonOnCard(cardElement, type);
+  setBlockReasonOnCard(cardElement, type, reasonValue);
 }
 
-function setBlockReasonOnCard(cardElement, type) {
-  const reasonText = BLOCK_REASON_MAP[type];
-  if (!reasonText) return;
+function buildBlockReasonText(type, reasonValue) {
+  if (type === "info" && reasonValue === REGEX_BLOCK_VALUE) {
+    return "屏蔽原因: 正则匹配(无法定位具体规则,请在面板移除对应正则)";
+  }
+  if (type === "info" && reasonValue) {
+    return `屏蔽原因: UP: ${reasonValue}`;
+  }
+  if (type === "info") {
+    return "屏蔽原因: 标题/UP主名";
+  }
+  if (type === "tname" && reasonValue) {
+    return `屏蔽原因: 标签: ${reasonValue}`;
+  }
+  if (type === "tname") {
+    return "屏蔽原因: 分类标签";
+  }
+  return `屏蔽原因: ${BLOCK_REASON_MAP[type] || type}`;
+}
+
+function isReasonCancellable(type, reasonValue) {
+  if (type === "info") {
+    return !!reasonValue && reasonValue !== REGEX_BLOCK_VALUE;
+  }
+  if (type === "tname") {
+    return !!reasonValue;
+  }
+  return false;
+}
+
+function cancelCardBlockReason(card, type, value) {
+  if (!card || !value) return;
+  if (type === "info") {
+    const idx = exactMatchBlacklist.findIndex(
+      (item) => item.toLowerCase() === String(value).toLowerCase()
+    );
+    if (idx === -1) return; 
+    exactMatchBlacklist.splice(idx, 1);
+    saveBlacklistsToStorage();
+    refreshExactMatchList();
+  } else if (type === "tname") {
+    const idx = tagNameBlacklist.indexOf(value);
+    if (idx === -1) return;
+    tagNameBlacklist.splice(idx, 1);
+    saveBlacklistsToStorage();
+    refreshTagNameList();
+  } else {
+    return; 
+  }
+
+      clearPendingFilter(card);
+  const realCard = getRealVideoCardElement(card);
+  unmarkBlockedCard(realCard);
+  removeBlockReason(card);
+  removeKirbyOverlay(card);
+  if (realCard) {
+    realCard.style.display = "block";
+    realCard.style.visibility = "visible";
+  }
+  if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
+    applyPendingFilter(card);
+  }
+  processedVideoCards.delete(card);
+  videoCardProcessQueue.add(card);
+  if (!isVideoCardQueueProcessing && typeof processVideoCardQueue === "function") {
+    processVideoCardQueue();
+  }
+  refreshBlockCountDisplay();
+}
+
+function setBlockReasonOnCard(cardElement, type, reasonValue = null) {
         const isVideoPageAd =
     type === "ad" &&
     isCurrentPageVideo() &&
@@ -457,6 +533,7 @@ function hideVideoCard(cardElement, type = "none") {
     ? ensureAdBlockContainer(cardElement)
     : ensureBlockContainerOnCard(cardElement);
   if (!container) return;
+  container.classList.add("is-blocked"); 
   let reasonElement = container.querySelector(
     ".bilibili-blacklist-block-reason"
   );
@@ -472,14 +549,27 @@ function hideVideoCard(cardElement, type = "none") {
       container.appendChild(reasonElement);
     }
   }
-  reasonElement.textContent = `屏蔽原因: ${reasonText}`;
+  const cancellable = isReasonCancellable(type, reasonValue);
+  reasonElement.textContent = buildBlockReasonText(type, reasonValue);
+  reasonElement.classList.toggle("is-cancellable", cancellable);
+  reasonElement.title = cancellable
+    ? "点击取消本卡屏蔽(仅当前视频,不影响黑名单规则)"
+    : "";
+  if (cancellable) {
+    reasonElement.dataset.blockType = type;
+    reasonElement.dataset.blockValue = reasonValue || "";
+  } else {
+    delete reasonElement.dataset.blockType;
+    delete reasonElement.dataset.blockValue;
+  }
 }
 
-function removeBlockReason(cardElement) {
+function removeBlockReason(cardElement) {
   const container = cardElement.querySelector(
     ".bilibili-blacklist-block-container"
   );
   if (!container) return;
+  container.classList.remove("is-blocked");
   const reasonElement = container.querySelector(
     ".bilibili-blacklist-block-reason"
   );
@@ -488,7 +578,7 @@ function hideVideoCard(cardElement, type = "none") {
   }
 }
 
-function decrementBlockCounter(type) {
+function decrementBlockCounter(type) {
   if (type === "info" && countBlockInfo > 0) countBlockInfo--;
   else if (type === "ad" && countBlockAD > 0) countBlockAD--;
   else if (type === "tname" && countBlockTName > 0) countBlockTName--;
@@ -496,7 +586,7 @@ function hideVideoCard(cardElement, type = "none") {
   else if (type === "vertical" && countBlockVertical > 0) countBlockVertical--;
 }
 
-function unmarkBlockedCard(realCard) {
+function unmarkBlockedCard(realCard) {
   if (!realCard) return;
   if (blockedVideoCards.has(realCard)) {
     blockedVideoCards.delete(realCard);
@@ -505,7 +595,7 @@ function hideVideoCard(cardElement, type = "none") {
   realCard.removeAttribute("data-bl-block-type");
 }
 
-function resetCardDecorations(cardElement) {
+function resetCardDecorations(cardElement) {
   if (!cardElement) return;
   const container = cardElement.querySelector(
     ".bilibili-blacklist-block-container"
@@ -521,7 +611,7 @@ function hideVideoCard(cardElement, type = "none") {
   }
 }
 
-function getRealVideoCardElement(cardElement) {
+function getRealVideoCardElement(cardElement) {
     if (isCurrentPageSearch()) {
     return cardElement.parentElement;
   }
@@ -536,7 +626,7 @@ function hideVideoCard(cardElement, type = "none") {
   return cardElement;
 }
 
-function queryAllVideoCards() {
+function queryAllVideoCards() {
   if (isCurrentPageMain()) {
     return document.querySelectorAll(".bili-video-card");
   } else if (isCurrentPageVideo()) {
@@ -553,7 +643,7 @@ function hideVideoCard(cardElement, type = "none") {
   return null;
 }
 
-  function processCard(card) {
+  function processCard(card) {
     if (processedVideoCards.has(card)) {
     return;
   }
@@ -600,7 +690,7 @@ function scanAndBlockVideoCards() {
   }
 }
 
-function fixMainPageLayout() {
+function fixMainPageLayout() {
   if (!isCurrentPageMain()) return;
   const container = document.querySelector(
     ".recommended-container_floor-aside .container"
@@ -627,7 +717,7 @@ function scanAndBlockVideoCards() {
   }
 }
 
-function toggleShowAllBlockedVideos() {
+function toggleShowAllBlockedVideos() {
   isShowAllVideos = !isShowAllVideos;
   blockedVideoCards.forEach((card) => {
     const overlay = card.querySelector("#bilibili-blacklist-kirby");
@@ -650,7 +740,7 @@ function scanAndBlockVideoCards() {
     : "#fb7299";
 }
 
-function getVideoCardInfo(cardElement) {
+function getVideoCardInfo(cardElement) {
   let upName = "";
   let videoTitle = "";
 
@@ -694,15 +784,22 @@ function scanAndBlockVideoCards() {
   return { upName, videoTitle };
 }
 
-function isExactBlacklisted(upName) {
-  const lowerCaseUpName = (upName || "").toLowerCase();
-  if (!lowerCaseUpName) return false;
-  return exactMatchBlacklist.some(
-    (item) => item.toLowerCase() === lowerCaseUpName
-  );
+function isExactBlacklisted(upName) {
+  return !!getExactBlacklistMatch(upName);
 }
 
-function isRegexBlacklisted(upName, title) {
+function getExactBlacklistMatch(upName) {
+  const lowerCaseUpName = (upName || "").toLowerCase();
+  if (!lowerCaseUpName) return null;
+  for (let i = 0; i < exactMatchBlacklist.length; i++) {
+    if (exactMatchBlacklist[i].toLowerCase() === lowerCaseUpName) {
+      return exactMatchBlacklist[i];
+    }
+  }
+  return null;
+}
+
+function isRegexBlacklisted(upName, title) {
   const name = upName || "";
   const text = title || "";
   for (let i = 0; i < regexMatchBlacklist.length; i++) {
@@ -713,16 +810,16 @@ function scanAndBlockVideoCards() {
   return false;
 }
 
-function isBlacklisted(upName, title) {
+function isBlacklisted(upName, title) {
   return isExactBlacklisted(upName) || isRegexBlacklisted(upName, title);
 }
 
-function testRegex(re, text) {
+function testRegex(re, text) {
   re.lastIndex = 0;
   return re.test(text);
 }
 
-function addToExactBlacklist(upName, cardElement = null) {
+function addToExactBlacklist(upName, cardElement = null) {
   try {
     if (!upName) return;
     if (!exactMatchBlacklist.includes(upName)) {
@@ -739,7 +836,7 @@ function scanAndBlockVideoCards() {
   }
 }
 
-function removeFromExactBlacklist(upName) {
+function removeFromExactBlacklist(upName) {
   try {
     if (exactMatchBlacklist.includes(upName)) {
       const index = exactMatchBlacklist.indexOf(upName);
@@ -752,7 +849,7 @@ function scanAndBlockVideoCards() {
   }
 }
 
-function addToTagNameBlacklist(tagName, cardElement = null) {
+function addToTagNameBlacklist(tagName, cardElement = null) {
   try {
     if (!tagName) {
       return;
@@ -771,7 +868,7 @@ function scanAndBlockVideoCards() {
   }
 }
 
-function removeFromTagNameBlacklist(tagName) {
+function removeFromTagNameBlacklist(tagName) {
   try {
     if (tagNameBlacklist.includes(tagName)) {
       const index = tagNameBlacklist.indexOf(tagName);
@@ -784,7 +881,7 @@ function scanAndBlockVideoCards() {
   }
 }
 
-function hideAllCardsByUpName(upName) {
+function hideAllCardsByUpName(upName) {
   const videoCards = queryAllVideoCards();
   if (!videoCards) return;
   videoCards.forEach(card => {
@@ -795,7 +892,7 @@ function scanAndBlockVideoCards() {
   });
 }
 
-function hideAllCardsByTagName(tagName) {
+function hideAllCardsByTagName(tagName) {
   const videoCards = queryAllVideoCards();
   if (!videoCards) return;
   videoCards.forEach(card => {
@@ -805,8 +902,8 @@ function scanAndBlockVideoCards() {
   });
 }
 
-let tnameRetriedCards = new WeakSet();
-function getCardHrefLink(cardElement) {
+let tnameRetriedCards = new WeakSet();
+function getCardHrefLink(cardElement) {
   const hrefLink = cardElement.querySelector("a");
   if (hrefLink) {
     return hrefLink.getAttribute("href");
@@ -821,7 +918,7 @@ function checkLinkCM(link) {
   }
   return false;
 }
-function getLinkBvId(link) {
+function getLinkBvId(link) {
   try {
     if (!link) {
       return null;
@@ -834,11 +931,11 @@ function checkLinkCM(link) {
   }
 }
 
-const bvApiDataCache = new Map();
+const bvApiDataCache = new Map();
 const BV_API_CACHE_TTL = 10 * 60 * 1000;
 const BV_API_TIMEOUT_MS = 5000;
 
-function hasFreshBvApiCache(bvid) {
+function hasFreshBvApiCache(bvid) {
   if (!bvid) return false;
   const cached = bvApiDataCache.get(bvid);
   return !!(cached && Date.now() < cached.expire);
@@ -879,30 +976,37 @@ async function getBilibiliVideoApiData(bvid) {
     if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 }
-function isCardBlacklistedByTagName(cardElement) {
+function getBlacklistedTagName(cardElement) {
   const tnameGroup = cardElement.querySelector(
     ".bilibili-blacklist-tname-group"
   );
-  if (tnameGroup) {
-    const tnameElements = tnameGroup.querySelectorAll(
-      ".bilibili-blacklist-tname"
-    );
-    for (const tnameElement of tnameElements) {
-      const tname = tnameElement.textContent.trim();
-      if (tagNameBlacklist.includes(tname)) {
-        return true;
-      }
+  if (!tnameGroup) return null;
+  const tnameElements = tnameGroup.querySelectorAll(
+    ".bilibili-blacklist-tname"
+  );
+  for (const tnameElement of tnameElements) {
+    const tname = tnameElement.textContent.trim();
+    if (!tname) continue;
+    let matched = null;
+    if (tagNameBlacklist.includes(tname)) {
+      matched = tname;
+    } else {
             const name = getTagNameByV2(tname);
-      if (name === null) continue;
-      if (tagNameBlacklist.includes(name)) {
-        return true;
+      if (name !== null && tagNameBlacklist.includes(name)) {
+        matched = name;
       }
     }
+    if (matched === null) continue;
+    return matched;
   }
-  return false;
+  return null;
 }
 
-function addTNameButtonToGroup(group, tagName, card) {
+function isCardBlacklistedByTagName(cardElement) {
+  return !!getBlacklistedTagName(cardElement);
+}
+
+function addTNameButtonToGroup(group, tagName, card) {
   if (tagName == null) return false;
   const name = String(tagName).trim();
   if (!name) return false;
@@ -916,7 +1020,7 @@ async function getBilibiliVideoApiData(bvid) {
   return true;
 }
 
-async function attachTNameGroupToCard(card, bvId) {
+async function attachTNameGroupToCard(card, bvId) {
   const usedNetwork = !hasFreshBvApiCache(bvId);
   const data = await getBilibiliVideoApiData(bvId);
   let tnameResolved = false;
@@ -954,7 +1058,7 @@ async function getBilibiliVideoApiData(bvid) {
   return { data, tnameResolved, usedNetwork };
 }
 
-async function processVideoCardQueue() {
+async function processVideoCardQueue() {
   if (isVideoCardQueueProcessing) return;
   isVideoCardQueueProcessing = true;
   let localDecisionStreak = 0; 
@@ -992,57 +1096,100 @@ async function getBilibiliVideoApiData(bvid) {
     let usedNetwork = false; 
     let shouldHide = false;
     let blockType = "none";
+    let blockReasonValue = null; 
 
         const link = getCardHrefLink(card);
+    const bvId = getLinkBvId(link);
     if (checkLinkCM(link)) {
       shouldHide = true;
       blockType = "cm";
     }
     const { upName, videoTitle } = getVideoCardInfo(card);
-            if (!shouldHide && globalPluginConfig.flagInfo && (upName || videoTitle)) {
-      if (isExactBlacklisted(upName)) {
+                if (!shouldHide && globalPluginConfig.flagInfo && (upName || videoTitle)) {
+      const exactMatch = getExactBlacklistMatch(upName);
+      if (exactMatch) {
         shouldHide = true;
         blockType = "info";
+        blockReasonValue = exactMatch;
       } else if (isRegexBlacklisted(upName, videoTitle)) {
         shouldHide = true;
         blockType = "info";
+        blockReasonValue = REGEX_BLOCK_VALUE;
       }
     }
 
-    const bvId = getLinkBvId(link);
     const hasTNameGroup = !!card.querySelector(".bilibili-blacklist-tname-group");
 
         if (
       !shouldHide &&
       (globalPluginConfig.flagTName || globalPluginConfig.flagVertical) &&
-      bvId &&
-      !hasTNameGroup
+      bvId
     ) {
-      const result = await attachTNameGroupToCard(card, bvId);
-      usedNetwork = result.usedNetwork;
-      const data = result.data;
-
-      if (data) {
-        if (isCardBlacklistedByTagName(card)) {
-          shouldHide = true;
-          blockType = "tname";
-        }
-                if (
-          !shouldHide &&
-          globalPluginConfig.flagVertical &&
-          data.dimension &&
-          data.dimension.width &&
-          data.dimension.height
-        ) {
-          const dimension = data.dimension.width / data.dimension.height;
-          if (dimension < globalPluginConfig.verticalScaleThreshold) {
+      if (hasTNameGroup) {
+                                const result = await attachTNameGroupToCard(card, bvId);
+        usedNetwork = result.usedNetwork;
+        const data = result.data;
+        if (data) {
+          const matchedTag = getBlacklistedTagName(card);
+          if (matchedTag) {
             shouldHide = true;
-            blockType = "vertical";
+            blockType = "tname";
+            blockReasonValue = matchedTag;
+          }
+                    if (
+            !shouldHide &&
+            globalPluginConfig.flagVertical &&
+            data.dimension &&
+            data.dimension.width &&
+            data.dimension.height
+          ) {
+            const dimension = data.dimension.width / data.dimension.height;
+            if (dimension < globalPluginConfig.verticalScaleThreshold) {
+              shouldHide = true;
+              blockType = "vertical";
+            }
           }
         }
+              } else {
+                const result = await attachTNameGroupToCard(card, bvId);
+        usedNetwork = result.usedNetwork;
+        const data = result.data;
 
-                        if (globalPluginConfig.flagTName && !shouldHide && !result.tnameResolved) {
-          if (!tnameRetriedCards.has(card)) {
+        if (data) {
+          const matchedTag = getBlacklistedTagName(card);
+          if (matchedTag) {
+            shouldHide = true;
+            blockType = "tname";
+            blockReasonValue = matchedTag;
+          }
+                    if (
+            !shouldHide &&
+            globalPluginConfig.flagVertical &&
+            data.dimension &&
+            data.dimension.width &&
+            data.dimension.height
+          ) {
+            const dimension = data.dimension.width / data.dimension.height;
+            if (dimension < globalPluginConfig.verticalScaleThreshold) {
+              shouldHide = true;
+              blockType = "vertical";
+            }
+          }
+
+                              if (globalPluginConfig.flagTName && !shouldHide && !result.tnameResolved) {
+            if (!tnameRetriedCards.has(card)) {
+              tnameRetriedCards.add(card);
+              videoCardProcessQueue.add(card); 
+              if (usedNetwork) {
+                await sleep(globalPluginConfig.processQueueInterval);
+              }
+              continue;
+            }
+            shouldHide = true;
+            blockType = "tname";
+          }
+        } else if (globalPluginConfig.flagTName) {
+                              if (!tnameRetriedCards.has(card)) {
             tnameRetriedCards.add(card);
             videoCardProcessQueue.add(card); 
             if (usedNetwork) {
@@ -1053,17 +1200,6 @@ async function getBilibiliVideoApiData(bvid) {
           shouldHide = true;
           blockType = "tname";
         }
-      } else if (globalPluginConfig.flagTName) {
-                        if (!tnameRetriedCards.has(card)) {
-          tnameRetriedCards.add(card);
-          videoCardProcessQueue.add(card); 
-          if (usedNetwork) {
-            await sleep(globalPluginConfig.processQueueInterval);
-          }
-          continue;
-        }
-        shouldHide = true;
-        blockType = "tname";
       }
     } else if (
       shouldHide &&
@@ -1077,7 +1213,7 @@ async function getBilibiliVideoApiData(bvid) {
 
         if (shouldHide) {
             clearPendingFilter(card);
-      hideVideoCard(card, blockType);
+      hideVideoCard(card, blockType, blockReasonValue);
     } else {
             clearPendingFilter(card);
       const realCardToDisplay = getRealVideoCardElement(card);
@@ -1109,7 +1245,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const KIRBY_FADE_DURATION_MS = 800;
+const KIRBY_FADE_DURATION_MS = 800;
 const DISPLAY_MODE_INHERIT_OPTIONS = [
   { value: "inherit", label: "继承全局" },
   { value: "blur", label: "模糊遮盖" },
@@ -1120,7 +1256,7 @@ const hoverRevealBoundCards = new WeakSet();
 const hoverRevealTimers = new WeakMap();
 const kirbyFadeTimers = new WeakMap();
 
-function createBlockUpButton(upName, cardElement) {
+function createBlockUpButton(upName, cardElement) {
   const button = document.createElement("div");
   button.className = "bilibili-blacklist-block-btn";
   button.textContent = "屏蔽";
@@ -1130,7 +1266,7 @@ const kirbyFadeTimers = new WeakMap();
   return button;
 }
 
-function createTNameBlockButton(tagName, cardElement) {
+function createTNameBlockButton(tagName, cardElement) {
   const button = document.createElement("span");
   button.className = "bilibili-blacklist-tname";
   button.textContent = tagName;
@@ -1146,7 +1282,7 @@ const CARD_ROOT_SELECTORS_FOR_BUTTON = [
   ".feed-card",
 ];
 
-function findCardForButton(button) {
+function findCardForButton(button) {
   const container = button.closest(".bilibili-blacklist-block-container");
   if (!container) return null;
   for (const sel of CARD_ROOT_SELECTORS_FOR_BUTTON) {
@@ -1158,7 +1294,7 @@ const CARD_ROOT_SELECTORS_FOR_BUTTON = [
 
 let cardButtonDelegationInstalled = false;
 
-function setupCardButtonDelegation() {
+function setupCardButtonDelegation() {
   if (cardButtonDelegationInstalled) return;
   cardButtonDelegationInstalled = true;
   document.addEventListener(
@@ -1177,6 +1313,18 @@ let cardButtonDelegationInstalled = false;
         return;
       }
 
+            const reasonBtn = t.closest(".bilibili-blacklist-block-reason");
+      if (reasonBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!reasonBtn.classList.contains("is-cancellable")) return;
+        const blockType = reasonBtn.dataset.blockType || "";
+        const blockValue = reasonBtn.dataset.blockValue || "";
+        if (!blockType || !blockValue) return;
+        cancelCardBlockReason(findCardForButton(reasonBtn), blockType, blockValue);
+        return;
+      }
+
       const tnameBtn = t.closest(".bilibili-blacklist-tname");
       if (tnameBtn) {
         e.stopPropagation();
@@ -1190,7 +1338,7 @@ let cardButtonDelegationInstalled = false;
   );
 }
 
-function addBlacklistManagerButton() {
+function addBlacklistManagerButton() {
   if (!globalPluginConfig.flagHeaderButton) return; 
   const rightEntry = document.querySelector(".right-entry");
   if (!rightEntry) {
@@ -1232,14 +1380,14 @@ let cardButtonDelegationInstalled = false;
   }
 }
 
-function toggleHeaderButtonVisibility() {
+function toggleHeaderButtonVisibility() {
   const btn = document.querySelector("#bilibili-blacklist-manager-button");
   if (btn) {
     btn.style.display = globalPluginConfig.flagHeaderButton ? "" : "none";
   }
 }
 
-function initTampermonkeyMenu() {
+function initTampermonkeyMenu() {
   if (typeof GM_registerMenuCommand !== "function") return;
   GM_registerMenuCommand("显示/隐藏顶部管理按钮", () => {
     globalPluginConfig.flagHeaderButton = !globalPluginConfig.flagHeaderButton;
@@ -1251,7 +1399,7 @@ let cardButtonDelegationInstalled = false;
   });
 }
 
-function refreshBlockCountDisplay() {
+function refreshBlockCountDisplay() {
   const headerNotReady = isCurrentPageVideo() && !videoHeaderReady;
   if (!headerNotReady) {
     if (blockCountDisplayElement) {
@@ -1285,7 +1433,7 @@ function createBlacklistListItem(contentText, onRemoveClick) {
   return item;
 }
 
-function refreshExactMatchList() {
+function refreshExactMatchList() {
   if (!exactMatchListElement) {
     if (!isBlacklistPanelCreated()) {
       return;
@@ -1317,7 +1465,7 @@ function createBlacklistListItem(contentText, onRemoveClick) {
   }
 }
 
-function refreshRegexMatchList() {
+function refreshRegexMatchList() {
   if (!regexMatchListElement) {
     if (!isBlacklistPanelCreated()) {
       return;
@@ -1354,7 +1502,7 @@ function createBlacklistListItem(contentText, onRemoveClick) {
   }
 }
 
-function refreshTagNameList() {
+function refreshTagNameList() {
   if (!tagNameListElement) {
     if (!isBlacklistPanelCreated()) {
       return;
@@ -1503,7 +1651,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   return container;
 }
 
-function refreshConfigSettings() {
+function refreshConfigSettings() {
   if (!configListElement) {
     if (!isBlacklistPanelCreated()) {
       return;
@@ -1521,7 +1669,6 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
     const tempToggleContainer = document.createElement("div");
   tempToggleContainer.className =
     "bilibili-blacklist-panel-row bilibili-blacklist-temp-toggle";
-
   const tempToggleLabel = document.createElement("span");
   tempToggleLabel.textContent = "临时开关";
 
@@ -1741,14 +1888,14 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   configListElement.appendChild(disclaimer);
 }
 
-function refreshAllPanelTabs() {
+function refreshAllPanelTabs() {
   refreshExactMatchList();
   refreshRegexMatchList();
   refreshTagNameList();
   refreshConfigSettings();
 }
 
-function isBlacklistPanelCreated() {
+function isBlacklistPanelCreated() {
   const panelInDom = document.querySelector(
     "#bilibili-blacklist-manager-panel"
   );
@@ -1761,7 +1908,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   return false;
 }
 
-function createBlacklistPanel() {
+function createBlacklistPanel() {
   if (isBlacklistPanelCreated()) {
     return;
   }
@@ -1926,7 +2073,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   return managerPanel;
 }
 
-GM_addStyle(`
+GM_addStyle(`
   /* ===== 屏蔽按钮容器 ===== */
   .bilibili-blacklist-block-container {
     display: none;
@@ -1990,9 +2137,23 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
     cursor: pointer;
   }
 
+  /* 已屏蔽（有屏蔽原因）的卡片：隐藏“屏蔽”按钮，只保留原因/标签按钮 */
+  .bilibili-blacklist-block-container.is-blocked .bilibili-blacklist-block-btn {
+    display: none !important;
+  }
+
   .bilibili-blacklist-block-reason {
     background-color: #f56c6c;
     pointer-events: none;
+  }
+
+  /* 支持“本卡放行”的原因按钮可点击 */
+  .bilibili-blacklist-block-reason.is-cancellable {
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .bilibili-blacklist-block-reason.is-cancellable:hover {
+    filter: brightness(1.15);
   }
 
   .bilibili-blacklist-tname-group {
@@ -2328,7 +2489,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   }
 `);
 
-function getKirbySVG() {
+function getKirbySVG() {
   return `
       <svg width="35" height="35" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"  >
           <ellipse cx="70" cy="160" rx="30" ry="15" fill="#cc3333" />
@@ -2351,7 +2512,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   `;
 }
 
-function fadeInKirbyOverlay(overlay) {
+function fadeInKirbyOverlay(overlay) {
   if (!overlay) return;
   const pendingTimer = kirbyFadeTimers.get(overlay);
   if (pendingTimer) {
@@ -2364,7 +2525,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   overlay.style.opacity = "1";
 }
 
-function fadeOutKirbyOverlay(overlay) {
+function fadeOutKirbyOverlay(overlay) {
   if (!overlay) return;
   const pendingTimer = kirbyFadeTimers.get(overlay);
   if (pendingTimer) clearTimeout(pendingTimer);
@@ -2380,7 +2541,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   );
 }
 
-function cancelKirbyFade(overlay) {
+function cancelKirbyFade(overlay) {
   if (!overlay) return;
   const pendingTimer = kirbyFadeTimers.get(overlay);
   if (pendingTimer) {
@@ -2389,7 +2550,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   }
 }
 
-function restoreAllBlockedVideoOverlays() {
+function restoreAllBlockedVideoOverlays() {
   if (isShowAllVideos) return;
   blockedVideoCards.forEach((card) => {
     const overlay = card.querySelector("#bilibili-blacklist-kirby");
@@ -2400,7 +2561,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   });
 }
 
-function bindHoverRevealToCard(cardElement) {
+function bindHoverRevealToCard(cardElement) {
   if (hoverRevealBoundCards.has(cardElement)) return;
   hoverRevealBoundCards.add(cardElement);
 
@@ -2458,7 +2619,7 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   });
 }
 
-function addDisplayOverlayToCard(cardElement, mode) {
+function addDisplayOverlayToCard(cardElement, mode) {
   bindHoverRevealToCard(cardElement);
     if (cardElement.querySelector("#bilibili-blacklist-kirby") != null) return;
   const kirbyWrapper = document.createElement("div");
@@ -2492,11 +2653,11 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   hostElement.appendChild(kirbyWrapper);
 }
 
-function addKirbyOverlayToCard(cardElement) {
+function addKirbyOverlayToCard(cardElement) {
   addDisplayOverlayToCard(cardElement, "kirby");
 }
 
-function removeKirbyOverlay(cardElement) {
+function removeKirbyOverlay(cardElement) {
   const kirbyWrapper = cardElement.querySelector("#bilibili-blacklist-kirby");
   if (kirbyWrapper) {
     kirbyWrapper.remove();
@@ -3635,7 +3796,7 @@ function initAutoplaySkip() {
   );
 }
 
-var NET_INTERCEPT = {
+var NET_INTERCEPT = {
   enabled: false,
   rewrite: true,   
     urlPatterns: [
@@ -3647,7 +3808,7 @@ function initAutoplaySkip() {
     page: (typeof unsafeWindow !== "undefined") ? unsafeWindow : window
 };
 
-function netUrlMatches(url) {
+function netUrlMatches(url) {
   var patterns = NET_INTERCEPT.urlPatterns;
   for (var i = 0; i < patterns.length; i++) {
     if (url.indexOf(patterns[i]) !== -1) return true;
@@ -3655,7 +3816,7 @@ function initAutoplaySkip() {
   return false;
 }
 
-function rewriteRecommendation(url, responseText) {
+function rewriteRecommendation(url, responseText) {
   try {
     var parsed = JSON.parse(responseText);
     if (!parsed || typeof parsed !== "object") return responseText;
@@ -3702,12 +3863,12 @@ function initAutoplaySkip() {
   }
 }
 
-function onFetch(url, responseText) {}
+function onFetch(url, responseText) {}
 
-function onXhr(url, responseText) {
+function onXhr(url, responseText) {
 }
 
-function installNetworkInterceptors() {
+function installNetworkInterceptors() {
   if (NET_INTERCEPT.enabled) return;
   var page = NET_INTERCEPT.page;
   if (!page || typeof page.fetch !== "function") return;
@@ -3759,7 +3920,7 @@ function initAutoplaySkip() {
   }
 }
 
-
+
 if (
   (document.readyState === "complete" || document.readyState === "interactive") &&
   typeof isfirstLoad !== "undefined" &&

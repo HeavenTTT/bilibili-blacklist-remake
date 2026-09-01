@@ -107,32 +107,48 @@ async function getBilibiliVideoApiData(bvid) {
   }
 }
 /**
- * 检查卡片是否包含任何黑名单标签。
+ * 返回卡片上第一个命中分类黑名单的标签名。
+ *
+ * 对卡片标签组里的每个标签按钮逐个判定：
+ *   标签文本本身在 tagNameBlacklist，或按 V2 映射出的名称在黑名单中 → 视为命中。
+ * 返回的标签名用于：屏蔽原因按钮显示具体内容、以及“取消屏蔽”时从黑名单删除该规则。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ * @returns {string|null} 命中的标签名，没有则返回 null。
+ */
+function getBlacklistedTagName(cardElement) {
+  const tnameGroup = cardElement.querySelector(
+    ".bilibili-blacklist-tname-group"
+  );
+  if (!tnameGroup) return null;
+  const tnameElements = tnameGroup.querySelectorAll(
+    ".bilibili-blacklist-tname"
+  );
+  for (const tnameElement of tnameElements) {
+    const tname = tnameElement.textContent.trim();
+    if (!tname) continue;
+    let matched = null;
+    if (tagNameBlacklist.includes(tname)) {
+      matched = tname;
+    } else {
+      // 临时更新，根据V2查找名称
+      const name = getTagNameByV2(tname);
+      if (name !== null && tagNameBlacklist.includes(name)) {
+        matched = name;
+      }
+    }
+    if (matched === null) continue;
+    return matched;
+  }
+  return null;
+}
+
+/**
+ * 检查卡片是否包含任何黑名单标签（放行感知）。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  * @returns {boolean} 如果有任何标签被列入黑名单，则返回true，否则返回false。
  */
 function isCardBlacklistedByTagName(cardElement) {
-  const tnameGroup = cardElement.querySelector(
-    ".bilibili-blacklist-tname-group"
-  );
-  if (tnameGroup) {
-    const tnameElements = tnameGroup.querySelectorAll(
-      ".bilibili-blacklist-tname"
-    );
-    for (const tnameElement of tnameElements) {
-      const tname = tnameElement.textContent.trim();
-      if (tagNameBlacklist.includes(tname)) {
-        return true;
-      }
-      // 临时更新，根据V2查找名称
-      const name = getTagNameByV2(tname);
-      if (name === null) continue;
-      if (tagNameBlacklist.includes(name)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return !!getBlacklistedTagName(cardElement);
 }
 
 /**
@@ -260,9 +276,11 @@ async function processVideoCardQueue() {
     let usedNetwork = false; // 本轮是否真的发起了网络请求（决定是否需要限速等待）
     let shouldHide = false;
     let blockType = "none";
+    let blockReasonValue = null; // 具体屏蔽内容（UP 名 / 标签名 / REGEX_BLOCK_VALUE）
 
     // ===== 阶段 A：零网络判定（软广链接 > UP主名精确 > 正则）=====
     const link = getCardHrefLink(card);
+    const bvId = getLinkBvId(link);
     if (checkLinkCM(link)) {
       shouldHide = true;
       blockType = "cm";
@@ -270,53 +288,103 @@ async function processVideoCardQueue() {
     const { upName, videoTitle } = getVideoCardInfo(card);
     // 依据 UP 名/标题判定：只要解析到其中一个就参与判定（空 UP 名也能用正则匹标题，
     // 标题解析失败也能用 UP 名精确匹配）。两者都解析不到则交给阶段 B，避免误伤。
+    // 精确匹配优先；命中即记录具体 UP 名（显示与取消用）。正则无法定位具体规则，记录哨兵值。
     if (!shouldHide && globalPluginConfig.flagInfo && (upName || videoTitle)) {
-      if (isExactBlacklisted(upName)) {
+      const exactMatch = getExactBlacklistMatch(upName);
+      if (exactMatch) {
         shouldHide = true;
         blockType = "info";
+        blockReasonValue = exactMatch;
       } else if (isRegexBlacklisted(upName, videoTitle)) {
         shouldHide = true;
         blockType = "info";
+        blockReasonValue = REGEX_BLOCK_VALUE;
       }
     }
 
-    const bvId = getLinkBvId(link);
     const hasTNameGroup = !!card.querySelector(".bilibili-blacklist-tname-group");
 
     // ===== 阶段 B：网络判定（分类标签 / 竖屏）=====
     if (
       !shouldHide &&
       (globalPluginConfig.flagTName || globalPluginConfig.flagVertical) &&
-      bvId &&
-      !hasTNameGroup
+      bvId
     ) {
-      const result = await attachTNameGroupToCard(card, bvId);
-      usedNetwork = result.usedNetwork;
-      const data = result.data;
-
-      if (data) {
-        if (isCardBlacklistedByTagName(card)) {
-          shouldHide = true;
-          blockType = "tname";
-        }
-        // 如果启用了垂直视频屏蔽
-        if (
-          !shouldHide &&
-          globalPluginConfig.flagVertical &&
-          data.dimension &&
-          data.dimension.width &&
-          data.dimension.height
-        ) {
-          const dimension = data.dimension.width / data.dimension.height;
-          if (dimension < globalPluginConfig.verticalScaleThreshold) {
+      if (hasTNameGroup) {
+        // 已有标签组（例如刚被“取消屏蔽”重新判定的卡片）：不重复挂标签，
+        // 用（通常已缓存的）接口数据补做 tname/竖屏完整判定 —— 满足
+        // “取消一次后重新完整检查，其它原因仍继续屏蔽”。
+        const result = await attachTNameGroupToCard(card, bvId);
+        usedNetwork = result.usedNetwork;
+        const data = result.data;
+        if (data) {
+          const matchedTag = getBlacklistedTagName(card);
+          if (matchedTag) {
             shouldHide = true;
-            blockType = "vertical";
+            blockType = "tname";
+            blockReasonValue = matchedTag;
+          }
+          // 如果启用了垂直视频屏蔽
+          if (
+            !shouldHide &&
+            globalPluginConfig.flagVertical &&
+            data.dimension &&
+            data.dimension.width &&
+            data.dimension.height
+          ) {
+            const dimension = data.dimension.width / data.dimension.height;
+            if (dimension < globalPluginConfig.verticalScaleThreshold) {
+              shouldHide = true;
+              blockType = "vertical";
+            }
           }
         }
+        // data 为 null（缓存过期且请求失败）：不重试、不误屏蔽，按未命中处理。
+      } else {
+        // 首次挂标签：请求接口，挂标签组 + tname/竖屏判定
+        const result = await attachTNameGroupToCard(card, bvId);
+        usedNetwork = result.usedNetwork;
+        const data = result.data;
 
-        // 开启了 tname 却没能解析出任何分类标签（数据缺失/结构变化）：
-        // 无法确定该卡是否命中分类黑名单，按保守策略——重排到队尾重试一次，再次失败则屏蔽。
-        if (globalPluginConfig.flagTName && !shouldHide && !result.tnameResolved) {
+        if (data) {
+          const matchedTag = getBlacklistedTagName(card);
+          if (matchedTag) {
+            shouldHide = true;
+            blockType = "tname";
+            blockReasonValue = matchedTag;
+          }
+          // 如果启用了垂直视频屏蔽
+          if (
+            !shouldHide &&
+            globalPluginConfig.flagVertical &&
+            data.dimension &&
+            data.dimension.width &&
+            data.dimension.height
+          ) {
+            const dimension = data.dimension.width / data.dimension.height;
+            if (dimension < globalPluginConfig.verticalScaleThreshold) {
+              shouldHide = true;
+              blockType = "vertical";
+            }
+          }
+
+          // 开启了 tname 却没能解析出任何分类标签（数据缺失/结构变化）：
+          // 无法确定该卡是否命中分类黑名单，按保守策略——重排到队尾重试一次，再次失败则屏蔽。
+          if (globalPluginConfig.flagTName && !shouldHide && !result.tnameResolved) {
+            if (!tnameRetriedCards.has(card)) {
+              tnameRetriedCards.add(card);
+              videoCardProcessQueue.add(card); // 加入队列最后
+              if (usedNetwork) {
+                await sleep(globalPluginConfig.processQueueInterval);
+              }
+              continue;
+            }
+            shouldHide = true;
+            blockType = "tname";
+          }
+        } else if (globalPluginConfig.flagTName) {
+          // 接口返回 null（请求失败/超时/限流/BV无效）：tname 解析失败。
+          // 重排到队尾重试一次，再次失败则按屏蔽处理。
           if (!tnameRetriedCards.has(card)) {
             tnameRetriedCards.add(card);
             videoCardProcessQueue.add(card); // 加入队列最后
@@ -328,19 +396,6 @@ async function processVideoCardQueue() {
           shouldHide = true;
           blockType = "tname";
         }
-      } else if (globalPluginConfig.flagTName) {
-        // 接口返回 null（请求失败/超时/限流/BV无效）：tname 解析失败。
-        // 重排到队尾重试一次，再次失败则按屏蔽处理。
-        if (!tnameRetriedCards.has(card)) {
-          tnameRetriedCards.add(card);
-          videoCardProcessQueue.add(card); // 加入队列最后
-          if (usedNetwork) {
-            await sleep(globalPluginConfig.processQueueInterval);
-          }
-          continue;
-        }
-        shouldHide = true;
-        blockType = "tname";
       }
     } else if (
       shouldHide &&
@@ -358,7 +413,7 @@ async function processVideoCardQueue() {
     if (shouldHide) {
       // 命中：先去掉“未处理”filter 遮盖，再走正式遮蔽（hide / kirby 遮罩 / 模糊）
       clearPendingFilter(card);
-      hideVideoCard(card, blockType);
+      hideVideoCard(card, blockType, blockReasonValue);
     } else {
       // 未命中：去掉“未处理”filter 遮盖，恢复原样显示
       clearPendingFilter(card);

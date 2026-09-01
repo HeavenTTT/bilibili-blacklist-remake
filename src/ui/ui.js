@@ -102,6 +102,19 @@ function setupCardButtonDelegation() {
         return;
       }
 
+      // 屏蔽原因按钮：info(精确)/tname 类型点击后，从黑名单删除对应规则并刷新该卡片重新判定
+      const reasonBtn = t.closest(".bilibili-blacklist-block-reason");
+      if (reasonBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!reasonBtn.classList.contains("is-cancellable")) return;
+        const blockType = reasonBtn.dataset.blockType || "";
+        const blockValue = reasonBtn.dataset.blockValue || "";
+        if (!blockType || !blockValue) return;
+        cancelCardBlockReason(findCardForButton(reasonBtn), blockType, blockValue);
+        return;
+      }
+
       const tnameBtn = t.closest(".bilibili-blacklist-tname");
       if (tnameBtn) {
         e.stopPropagation();
@@ -486,7 +499,6 @@ function refreshConfigSettings() {
   const tempToggleContainer = document.createElement("div");
   tempToggleContainer.className =
     "bilibili-blacklist-panel-row bilibili-blacklist-temp-toggle";
-
   const tempToggleLabel = document.createElement("span");
   tempToggleLabel.textContent = "临时开关";
 
@@ -984,9 +996,23 @@ GM_addStyle(`
     cursor: pointer;
   }
 
+  /* 已屏蔽（有屏蔽原因）的卡片：隐藏“屏蔽”按钮，只保留原因/标签按钮 */
+  .bilibili-blacklist-block-container.is-blocked .bilibili-blacklist-block-btn {
+    display: none !important;
+  }
+
   .bilibili-blacklist-block-reason {
     background-color: #f56c6c;
     pointer-events: none;
+  }
+
+  /* 支持“本卡放行”的原因按钮可点击 */
+  .bilibili-blacklist-block-reason.is-cancellable {
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .bilibili-blacklist-block-reason.is-cancellable:hover {
+    filter: brightness(1.15);
   }
 
   .bilibili-blacklist-tname-group {
