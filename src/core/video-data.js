@@ -106,6 +106,93 @@ async function getBilibiliVideoApiData(bvid) {
     if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 }
+
+// BV -> 视频标签接口数据缓存（10 分钟）
+const bvTagApiDataCache = new Map();
+
+function hasFreshBvTagApiCache(bvid) {
+  if (!bvid) return false;
+  const cached = bvTagApiDataCache.get(bvid);
+  return !!(cached && Date.now() < cached.expire);
+}
+
+/**
+ * 使用 BV ID 从 Bilibili 视频标签接口获取视频 TAG。
+ * @param {string} bvid - 视频的 BV ID。
+ * @returns {Promise<object|null>} 带 videoTags 字段的视频数据。
+ */
+async function getBilibiliVideoTagApiData(bvid) {
+  if (!bvid || bvid.length >= 24) {
+    return null;
+  }
+  const cached = bvTagApiDataCache.get(bvid);
+  if (cached && Date.now() < cached.expire) {
+    return cached.data;
+  }
+  const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${encodeURIComponent(bvid)}`;
+  const controller =
+    typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutTimer = controller
+    ? setTimeout(() => controller.abort(), BV_API_TIMEOUT_MS)
+    : null;
+  try {
+    const response = await fetch(
+      url,
+      controller ? { signal: controller.signal } : undefined
+    );
+    const json = await response.json();
+    if (json.code === 0 && Array.isArray(json.data)) {
+      const data = { videoTags: json.data };
+      bvTagApiDataCache.set(bvid, {
+        data,
+        expire: Date.now() + BV_API_CACHE_TTL,
+      });
+      return data;
+    }
+    return null;
+  } catch (error) {
+    console.error("[🫥BlackList] 视频标签 API 请求失败:", error);
+    return null;
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+  }
+}
+
+/**
+ * 只保留可用于屏蔽的视频标签：去掉背景音乐（bgm/music）和话题标签。
+ * @param {unknown} tag - 视频标签接口返回的 TAG 对象或旧格式字符串。
+ * @returns {string|null} 可展示的视频标签名。
+ */
+function normalizeVideoTagName(tag) {
+  if (typeof tag === "string") {
+    const name = tag.trim();
+    return name && !name.startsWith("#") ? name : null;
+  }
+  if (!tag || typeof tag !== "object") return null;
+  const tagType = String(tag.tag_type || "").toLowerCase();
+  if (tagType === "bgm" || tagType === "music" || tagType === "topic") {
+    return null;
+  }
+  if (tag.music_id) return null;
+  const name = String(tag.tag_name || "").trim();
+  if (!name || name.startsWith("#")) return null;
+  return name;
+}
+
+function getEligibleVideoTags(data) {
+  if (!data || !Array.isArray(data.videoTags)) return [];
+  const result = [];
+  const seen = new Set();
+  data.videoTags.forEach((tag) => {
+    const name = normalizeVideoTagName(tag);
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+  });
+  return result;
+}
+
 /**
  * 返回卡片上第一个命中分类黑名单的标签名。
  *
@@ -152,6 +239,28 @@ function isCardBlacklistedByTagName(cardElement) {
 }
 
 /**
+ * 返回卡片上第一个命中的视频标签黑名单项。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ * @returns {string|null} 命中的视频标签名，没有则返回 null。
+ */
+function getBlacklistedVideoTag(cardElement) {
+  const videoTagElements = cardElement.querySelectorAll(
+    ".bilibili-blacklist-video-tag"
+  );
+  for (const videoTagElement of videoTagElements) {
+    const tagName = (videoTagElement.textContent || "").trim();
+    if (tagName && videoTagBlacklist.includes(tagName)) {
+      return tagName;
+    }
+  }
+  return null;
+}
+
+function isCardBlacklistedByVideoTag(cardElement) {
+  return !!getBlacklistedVideoTag(cardElement);
+}
+
+/**
  * 向标签组添加一个“不重复”的标签按钮。
  * 同一分类标签可能同时出现在 data.tname / data.tname_v2 / tid_v2 映射出的 name / name_v2
  * 里，直接都加会出现重复按钮。这里按文本去重，只保留一个。
@@ -183,13 +292,31 @@ function addTNameButtonToGroup(group, tagName, card) {
  *   data: 接口数据；tnameResolved: 是否解析出至少一个分类标签；usedNetwork: 本次是否真的发了请求。
  */
 async function attachTNameGroupToCard(card, bvId) {
-  const usedNetwork = !hasFreshBvApiCache(bvId);
-  const data = await getBilibiliVideoApiData(bvId);
+  const needViewApi =
+    globalPluginConfig.flagTName || globalPluginConfig.flagVertical;
+  const needVideoTagApi = globalPluginConfig.flagVideoTag;
+  const usedNetwork =
+    (needViewApi && !hasFreshBvApiCache(bvId)) ||
+    (needVideoTagApi && !hasFreshBvTagApiCache(bvId));
+  const [viewData, videoTagData] = await Promise.all([
+    needViewApi ? getBilibiliVideoApiData(bvId) : Promise.resolve(null),
+    needVideoTagApi
+      ? getBilibiliVideoTagApiData(bvId)
+      : Promise.resolve(null),
+  ]);
+  const data =
+    viewData || videoTagData
+      ? { ...(viewData || {}), ...(videoTagData || {}) }
+      : null;
   let tnameResolved = false;
 
   if (data) {
     if (card.querySelector(".bilibili-blacklist-tname-group")) {
-      tnameResolved = true;
+      tnameResolved =
+        !globalPluginConfig.flagTName ||
+        !!card.querySelector(
+          ".bilibili-blacklist-tname-group .bilibili-blacklist-tname"
+        );
     } else {
       // 用 ensureBlockContainerOnCard 而不是 querySelector：解析不到 UP 名的卡片没有容器，
       // 旧实现会因此永远挂不上标签 → 被判为“tname 解析失败”→ 误屏蔽。
@@ -198,12 +325,15 @@ async function attachTNameGroupToCard(card, bvId) {
         const tnameGroup = document.createElement("div");
         tnameGroup.className = "bilibili-blacklist-tname-group";
         let hasTname = false;
+        let hasVideoTag = false;
 
         // 去重添加标签按钮：同一来源/tid 映射出的不同名字重复时只保留一个
-        hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
-        hasTname =
-          addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
-        if (data.tid_v2) {
+        if (globalPluginConfig.flagTName) {
+          hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
+          hasTname =
+            addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
+        }
+        if (globalPluginConfig.flagTName && data.tid_v2) {
           const obj = getTagNameById(data.tid_v2);
           if (obj) {
             hasTname =
@@ -212,9 +342,15 @@ async function attachTNameGroupToCard(card, bvId) {
               addTNameButtonToGroup(tnameGroup, obj.name_v2, card) || hasTname;
           }
         }
-        if (hasTname) {
+        if (globalPluginConfig.flagVideoTag) {
+          getEligibleVideoTags(data).forEach((tagName) => {
+            tnameGroup.appendChild(createVideoTagBlockButton(tagName, card));
+            hasVideoTag = true;
+          });
+        }
+        if (hasTname || hasVideoTag) {
           container.appendChild(tnameGroup);
-          tnameResolved = true;
+          tnameResolved = hasTname;
         }
       }
     }
@@ -307,7 +443,9 @@ async function processVideoCardQueue() {
     // ===== 阶段 B：网络判定（分类标签 / 竖屏）=====
     if (
       !shouldHide &&
-      (globalPluginConfig.flagTName || globalPluginConfig.flagVertical) &&
+      (globalPluginConfig.flagTName ||
+        globalPluginConfig.flagVideoTag ||
+        globalPluginConfig.flagVertical) &&
       bvId
     ) {
       if (hasTNameGroup) {
@@ -318,11 +456,21 @@ async function processVideoCardQueue() {
         usedNetwork = result.usedNetwork;
         const data = result.data;
         if (data) {
-          const matchedTag = getBlacklistedTagName(card);
+          const matchedTag = globalPluginConfig.flagTName
+            ? getBlacklistedTagName(card)
+            : null;
           if (matchedTag) {
             shouldHide = true;
             blockType = "tname";
             blockReasonValue = matchedTag;
+          }
+          const matchedVideoTag = globalPluginConfig.flagVideoTag
+            ? getBlacklistedVideoTag(card)
+            : null;
+          if (!shouldHide && matchedVideoTag) {
+            shouldHide = true;
+            blockType = "videoTag";
+            blockReasonValue = matchedVideoTag;
           }
           // 如果启用了垂直视频屏蔽
           if (
@@ -347,11 +495,21 @@ async function processVideoCardQueue() {
         const data = result.data;
 
         if (data) {
-          const matchedTag = getBlacklistedTagName(card);
+          const matchedTag = globalPluginConfig.flagTName
+            ? getBlacklistedTagName(card)
+            : null;
           if (matchedTag) {
             shouldHide = true;
             blockType = "tname";
             blockReasonValue = matchedTag;
+          }
+          const matchedVideoTag = globalPluginConfig.flagVideoTag
+            ? getBlacklistedVideoTag(card)
+            : null;
+          if (!shouldHide && matchedVideoTag) {
+            shouldHide = true;
+            blockType = "videoTag";
+            blockReasonValue = matchedVideoTag;
           }
           // 如果启用了垂直视频屏蔽
           if (
@@ -400,7 +558,7 @@ async function processVideoCardQueue() {
     } else if (
       shouldHide &&
       globalPluginConfig.flagAlwaysFetchTName &&
-      globalPluginConfig.flagTName &&
+      (globalPluginConfig.flagTName || globalPluginConfig.flagVideoTag) &&
       bvId &&
       !hasTNameGroup
     ) {
