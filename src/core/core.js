@@ -138,7 +138,7 @@ function applyPendingFilter(cardElement) {
   if (!real) return;
   if (pendingFilterCards.has(real)) return; // 已遮盖，避免重复
   pendingFilterCards.add(real);
-  real.style.filter = "blur(2px) grayscale(0.2)";
+  real.style.filter = "blur(8px) grayscale(0.5) opacity(0.4)";
 }
 
 /**
