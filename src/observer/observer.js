@@ -14,7 +14,7 @@
 
 // 增量观察：只处理“新插入”的卡片，不做全量重扫
 const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
-const seenCards = new WeakSet();
+let seenCards = new WeakSet();
 const seenAdElements = new WeakSet(); // 已被观察到的广告元素（仅用于判断“是否有新广告出现”）
 let videoHeaderReady = false;
 let observedRoot = null; // 当前实际 observe 的根节点（切视频后可能被整体替换）
@@ -130,6 +130,16 @@ function waitForContainer(selector, onFound, intervalMs = 250, timeoutMs = 15000
   const timer = setInterval(find, intervalMs);
   const timeout = setTimeout(() => clearInterval(timer), timeoutMs);
   find();
+}
+
+/**
+ * 重置“已观察到的卡片”记录。
+ *
+ * 观察器按元素引用去重，若 B 站复用同一批卡片节点只替换内容（搜索页翻页常见），
+ * 这些节点会被永远判为“已处理”而跳过。翻页时重置即可让它们重新参与处理。
+ */
+function resetSeenCards() {
+  seenCards = new WeakSet();
 }
 
 /**

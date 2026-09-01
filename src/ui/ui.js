@@ -521,6 +521,13 @@ function refreshConfigSettings() {
       "通过请求API获取分类标签"
     )
   );
+  configListElement.appendChild(
+    createSettingToggleButton(
+      "始终获取分类标签",
+      "flagAlwaysFetchTName",
+      "开启(默认)：即使卡片已被UP主名/正则/软广命中，也会在低优先级补一次请求，保证分类标签按钮始终可见。关闭：已命中的卡片不再请求API，队列处理明显更快（搜索页翻页尤其明显），代价是这些卡片上看不到分类标签。"
+    )
+  );
 
   // 标签缓存数量显示与清除按钮
   const tagNameListControlContainer = document.createElement("div");

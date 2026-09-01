@@ -1,6 +1,6 @@
 {
   "name": "bilibili-blacklist-remake",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Bilibili-BlackList 完全重写版：观察 B 站视频卡片并提取 标题 / UP 名 / bvid。本插件由 AI（DeepSeek Harness）编写，免责声明见 README。",
   "main": "build.js",
   "scripts": {

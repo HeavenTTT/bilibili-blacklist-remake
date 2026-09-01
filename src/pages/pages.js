@@ -14,6 +14,7 @@ function initializeScript() {
   lastBlockScanExecutionTime = 0;
   blockedVideoCards = new Set();
   videoCardProcessQueue = new Set();
+  tnameDecorateQueue = new Set();
   processedVideoCards = new WeakSet();
   tnameRetriedCards = new WeakSet(); // 重置 tname 解析失败重试记录
 
@@ -97,7 +98,84 @@ function initializeSearchPage() {
   setTimeout(() => {
     scanAndBlockVideoCards();
   }, 800);
+  // 翻页/换关键词时重置处理状态并重扫（详见 watchSearchPageChange）
+  lastSearchPageKey = getSearchPageKey();
+  installUrlChangeWatcher(watchSearchPageChange);
+  // 兜底：若翻页用的 pushState 被更早的引用绕过了我们的包装，这里靠低频比对 URL 兜住。
+  // 只做一次字符串比较，开销可忽略。
+  setInterval(watchSearchPageChange, 2000);
   console.log("[🫥BlackList] 搜索页已加载🍉");
+}
+
+/**
+ * 取搜索页的“当前页面”标识。
+ *
+ * 刻意只取有意义的查询参数，不直接用整个 location.search：B 站会用 replaceState
+ * 往 URL 上追加 spm_id_from 之类的埋点参数，直接比较整串会被误判为翻页，
+ * 导致反复重置卡片状态、页面闪烁。
+ * @returns {string}
+ */
+function getSearchPageKey() {
+  let params;
+  try {
+    params = new URLSearchParams(location.search);
+  } catch (e) {
+    return location.pathname + location.search;
+  }
+  const fields = ["keyword", "page", "order", "duration", "tids", "search_type"];
+  return (
+    location.pathname +
+    "|" +
+    fields.map((name) => `${name}=${params.get(name) || ""}`).join("&")
+  );
+}
+
+/**
+ * 检测搜索页翻页 / 换关键词，并重置卡片处理状态后重新扫描。
+ *
+ * 需要重置的原因：观察器的 seenCards 与队列的 processedVideoCards 都按元素引用去重，
+ * 若 B 站复用同一批卡片节点只替换内容，新一页的卡片会被判为“已处理”而完全不被处理；
+ * 同时节点上还会残留上一页的屏蔽按钮（旧 UP 名）与分类标签（会造成 tname 误判）。
+ * @returns {boolean} 本次调用是否检测到变化。
+ */
+function watchSearchPageChange() {
+  if (!isCurrentPageSearch()) return false;
+  const key = getSearchPageKey();
+  if (!lastSearchPageKey) {
+    lastSearchPageKey = key;
+    return false;
+  }
+  if (key === lastSearchPageKey) return false;
+  lastSearchPageKey = key;
+  console.log("[🫥BlackList] 搜索页翻页/条件变化，重置卡片处理状态:", key);
+  resetSearchPageCardState();
+  return true;
+}
+
+/**
+ * 重置搜索页的卡片处理状态，并安排几次重扫。
+ *
+ * 队列里上一页遗留的卡片不需要在这里清空：processVideoCardQueue 出队时会跳过
+ * 已从文档移除的卡片，既不会浪费请求，也不会出现“清空队列导致卡片永久停在遮盖态”。
+ */
+function resetSearchPageCardState() {
+  processedVideoCards = new WeakSet();
+  tnameRetriedCards = new WeakSet();
+  resetSeenCards();
+
+  // 清掉可能被复用节点带过来的旧装饰（屏蔽按钮/分类标签/遮罩/隐藏样式）
+  const cards = queryAllVideoCards();
+  if (cards) cards.forEach((card) => resetCardDecorations(card));
+
+  // 立刻重扫一次（绕过扫描节流），再补几次延迟扫描，等新一页卡片渲染完成
+  lastBlockScanExecutionTime = 0;
+  scanAndBlockVideoCards();
+  [400, 1200, 2500].forEach((delay) => {
+    setTimeout(() => {
+      lastBlockScanExecutionTime = 0;
+      scanAndBlockVideoCards();
+    }, delay);
+  });
 }
 
 /**
@@ -179,7 +257,11 @@ function startVideoPageProcessing(flag) {
 
 // 上一次检测到的播放页 BV，用于识别页面内切换视频
 let lastSeenVideoBv = "";
-let videoSwitchWatcherInstalled = false;
+// 上一次检测到的搜索页 URL（路径+查询串），用于识别翻页/换关键词
+let lastSearchPageKey = "";
+// 通用 URL 变化监听的处理函数列表与安装标志
+let urlChangeHandlers = [];
+let urlChangeWatcherInstalled = false;
 
 /**
  * 取用于“切视频”比对的 BV。
@@ -222,32 +304,50 @@ function watchVideoSwitch() {
 }
 
 /**
- * 安装“切视频”的即时监听：popstate + history.pushState/replaceState 包装。
- *
- * B 站页面内切视频走的是 pushState，不会触发 popstate，因此需要包装；
- * 包装只是在调用原方法之后追加一次检测，不改变其行为。失败时不影响功能，
- * 仍有 2.5s 定时兜底能检测到 BV 变化（只是覆盖时机会晚一些）。
+ * 安装“切视频”的即时监听（复用通用 URL 变化监听）。
  */
 function installVideoSwitchWatcher() {
-  if (videoSwitchWatcherInstalled) return;
-  videoSwitchWatcherInstalled = true;
-  window.addEventListener("popstate", watchVideoSwitch);
+  installUrlChangeWatcher(watchVideoSwitch);
+}
+
+/**
+ * 通用的 SPA URL 变化监听：popstate + history.pushState/replaceState 包装。
+ *
+ * B 站页面内切视频、搜索页翻页走的都是 pushState，不会触发 popstate，因此需要包装；
+ * 包装只是在调用原方法之后追加一次通知，不改变其行为。包装失败也不影响功能，
+ * 各页面自身都有定时兜底（只是响应会晚一些）。
+ * @param {Function} handler - URL 变化时调用的处理函数。
+ */
+function installUrlChangeWatcher(handler) {
+  if (typeof handler === "function" && urlChangeHandlers.indexOf(handler) === -1) {
+    urlChangeHandlers.push(handler);
+  }
+  if (urlChangeWatcherInstalled) return;
+  urlChangeWatcherInstalled = true;
+
+  const notify = () => {
+    urlChangeHandlers.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.error("[🫥BlackList] URL 变化处理出错:", e);
+      }
+    });
+  };
+
+  window.addEventListener("popstate", notify);
   try {
     ["pushState", "replaceState"].forEach((method) => {
       const original = history[method];
       if (typeof original !== "function") return;
       history[method] = function () {
         const result = original.apply(this, arguments);
-        try {
-          watchVideoSwitch();
-        } catch (e) {
-          console.error("[🫥BlackList] 切视频检测出错:", e);
-        }
+        notify();
         return result;
       };
     });
   } catch (e) {
-    console.warn("[🫥BlackList] 无法包装 history 方法，改由定时兜底检测切视频:", e);
+    console.warn("[🫥BlackList] 无法包装 history 方法，改由定时兜底检测 URL 变化:", e);
   }
 }
 

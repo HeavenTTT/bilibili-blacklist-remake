@@ -29,6 +29,9 @@ const defaultGlobalPluginConfig = {
   flagInfo: true, // 启用/禁用按UP主名/标题屏蔽
   flagAD: true, // 启用/禁用屏蔽一般广告
   flagTName: true, // 启用/禁用按标签名屏蔽（需要API调用）
+  // 始终获取分类标签：开启（默认）时，即使卡片已被 UP主名/正则/软广命中、判定上不再需要接口，
+  // 仍会在低优先级补一次请求，保证分类标签按钮始终可见；关闭可显著减少请求数、加快队列处理。
+  flagAlwaysFetchTName: true,
   flagCM: true, // 启用/禁用屏蔽cm.bilibili.com软广
   blockDisplayMode: "kirby", // 全局遮挡模式：blur=模糊遮盖 / kirby=模糊遮盖加卡比 / hide=隐藏卡片
   // 各屏蔽类型独立行为（inherit=继承全局）

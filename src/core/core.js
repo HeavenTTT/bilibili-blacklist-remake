@@ -19,6 +19,10 @@ let lastBlockScanExecutionTime = 0; // 上次执行BlockCard扫描的时间戳
 let blockedVideoCards = new Set(); // 存储已屏蔽的视频卡片元素
 let processedVideoCards = new WeakSet(); // 记录已处理过的卡片(避免重复处理，包括 UP主/标题检查和 tname 获取)
 let videoCardProcessQueue = new Set(); // 存储待处理的卡片，用于统一的队列处理
+// 低优先级“补分类标签”队列：卡片已由 UP名/正则/软广判定完成，判定本身不再需要接口，
+// 但 flagAlwaysFetchTName 开启时仍要显示分类标签按钮。这些请求排在主队列之后，
+// 保证它们不会拖慢其它卡片的判定。
+let tnameDecorateQueue = new Set();
 let isVideoCardQueueProcessing = false; // 是否正在处理队列
 let countBlockInfo = 0; // 已屏蔽视频计数
 let countBlockAD = 0; // 已屏蔽广告计数
@@ -222,6 +226,10 @@ function hideVideoCard(cardElement, type = "none") {
   }
 
   const mode = getEffectiveDisplayMode(type);
+  // 记录屏蔽类型：翻页复用节点等场景下需要撤销屏蔽时，据此回退对应计数
+  if (BLOCK_REASON_MAP[type]) {
+    realCardToBlock.setAttribute("data-bl-block-type", type);
+  }
   if (mode === "hide") {
     realCardToBlock.style.display = "none";
     realCardToBlock.style.visibility = "";
@@ -286,6 +294,56 @@ function removeBlockReason(cardElement) {
   );
   if (reasonElement) {
     reasonElement.remove();
+  }
+}
+
+/**
+ * 回退某个屏蔽类型的计数（撤销屏蔽时使用，避免面板上的
+ * “总数 = 各类型之和”对不上）。
+ * @param {string} type - 屏蔽类型。
+ */
+function decrementBlockCounter(type) {
+  if (type === "info" && countBlockInfo > 0) countBlockInfo--;
+  else if (type === "ad" && countBlockAD > 0) countBlockAD--;
+  else if (type === "tname" && countBlockTName > 0) countBlockTName--;
+  else if (type === "cm" && countBlockCM > 0) countBlockCM--;
+  else if (type === "vertical" && countBlockVertical > 0) countBlockVertical--;
+}
+
+/**
+ * 把一张卡片从“已屏蔽”集合中撤销，并回退对应计数。
+ * @param {HTMLElement} realCard - getRealVideoCardElement 得到的真实卡片元素。
+ */
+function unmarkBlockedCard(realCard) {
+  if (!realCard) return;
+  if (blockedVideoCards.has(realCard)) {
+    blockedVideoCards.delete(realCard);
+    decrementBlockCounter(realCard.getAttribute("data-bl-block-type"));
+  }
+  realCard.removeAttribute("data-bl-block-type");
+}
+
+/**
+ * 清除一张卡片上由本脚本添加的全部装饰与屏蔽状态，使其可以被重新判定。
+ *
+ * 用于搜索页翻页：B 站可能复用同一批卡片节点只替换内容，此时节点上会残留上一页的
+ * 屏蔽按钮（带旧 UP 名）、分类标签按钮（旧标签，会导致 tname 误判）、卡比遮罩与
+ * 隐藏样式。逐张重置后再走一次正常扫描，等价于“这批卡片是全新的”。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ */
+function resetCardDecorations(cardElement) {
+  if (!cardElement) return;
+  const container = cardElement.querySelector(
+    ".bilibili-blacklist-block-container"
+  );
+  if (container) container.remove(); // 同时带走屏蔽按钮与分类标签组
+  removeKirbyOverlay(cardElement);
+  clearPendingFilter(cardElement);
+  const realCard = getRealVideoCardElement(cardElement);
+  if (realCard) {
+    unmarkBlockedCard(realCard);
+    realCard.style.display = "";
+    realCard.style.visibility = "";
   }
 }
 
@@ -512,29 +570,44 @@ function getVideoCardInfo(cardElement) {
 }
 
 /**
- * 检查UP主名称或标题是否在黑名单中。
+ * 检查UP主名称是否命中精确匹配黑名单（零网络、最快，优先级最高）。
+ * @param {string} upName - 要检查的UP主名称。
+ * @returns {boolean}
+ */
+function isExactBlacklisted(upName) {
+  const lowerCaseUpName = (upName || "").toLowerCase();
+  if (!lowerCaseUpName) return false;
+  return exactMatchBlacklist.some(
+    (item) => item.toLowerCase() === lowerCaseUpName
+  );
+}
+
+/**
+ * 检查UP主名称或标题是否命中正则黑名单（零网络，优先级次于精确匹配）。
+ * 支持 /pattern/flags，默认 i；无效正则自动跳过。
+ * @param {string} upName - 要检查的UP主名称。
+ * @param {string} title - 要检查的视频标题。
+ * @returns {boolean}
+ */
+function isRegexBlacklisted(upName, title) {
+  const name = upName || "";
+  const text = title || "";
+  for (let i = 0; i < regexMatchBlacklist.length; i++) {
+    const re = compileRegex(regexMatchBlacklist[i]);
+    if (!re) continue;
+    if (testRegex(re, name) || testRegex(re, text)) return true;
+  }
+  return false;
+}
+
+/**
+ * 检查UP主名称或标题是否在黑名单中（精确匹配优先，其次正则）。
  * @param {string} upName - 要检查的UP主名称。
  * @param {string} title - 要检查的视频标题。
  * @returns {boolean} 如果在黑名单中则返回true，否则返回false。
  */
 function isBlacklisted(upName, title) {
-  upName = upName || "";
-  title = title || "";
-  const lowerCaseUpName = upName.toLowerCase();
-  // 检查精确匹配黑名单
-  if (
-    exactMatchBlacklist.some((item) => item.toLowerCase() === lowerCaseUpName)
-  ) {
-    return true;
-  }
-
-  // 检查正则匹配黑名单（支持 /pattern/flags，默认 i；无效正则自动跳过）
-  for (let i = 0; i < regexMatchBlacklist.length; i++) {
-    const re = compileRegex(regexMatchBlacklist[i]);
-    if (!re) continue;
-    if (testRegex(re, upName) || testRegex(re, title)) return true;
-  }
-  return false;
+  return isExactBlacklisted(upName) || isRegexBlacklisted(upName, title);
 }
 
 /**

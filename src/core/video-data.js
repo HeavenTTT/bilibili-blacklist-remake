@@ -53,6 +53,21 @@ function getLinkBvId(link) {
 // BV -> view 接口数据缓存（10 分钟），避免同一视频在多个页面/队列中重复请求
 const bvApiDataCache = new Map();
 const BV_API_CACHE_TTL = 10 * 60 * 1000;
+// 单次接口请求超时：没有超时的话，一个挂起的请求会把整条串行队列永久卡死，
+// 后面所有卡片都停在“未处理”状态（搜索页翻页后延迟十几秒的长尾来源之一）。
+const BV_API_TIMEOUT_MS = 5000;
+
+/**
+ * 判断某个 BV 是否已有未过期的接口缓存。
+ * 用于决定本轮是否真的发生了网络请求 —— 只有真正请求了才需要限速等待。
+ * @param {string} bvid
+ * @returns {boolean}
+ */
+function hasFreshBvApiCache(bvid) {
+  if (!bvid) return false;
+  const cached = bvApiDataCache.get(bvid);
+  return !!(cached && Date.now() < cached.expire);
+}
 
 async function getBilibiliVideoApiData(bvid) {
   if (!bvid || bvid.length >= 24) {
@@ -63,8 +78,16 @@ async function getBilibiliVideoApiData(bvid) {
     return cached.data;
   }
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
+  const controller =
+    typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutTimer = controller
+    ? setTimeout(() => controller.abort(), BV_API_TIMEOUT_MS)
+    : null;
   try {
-    const response = await fetch(url);
+    const response = await fetch(
+      url,
+      controller ? { signal: controller.signal } : undefined
+    );
     const json = await response.json();
     if (json.code === 0) {
       bvApiDataCache.set(bvid, {
@@ -72,11 +95,15 @@ async function getBilibiliVideoApiData(bvid) {
         expire: Date.now() + BV_API_CACHE_TTL,
       });
       return json.data;
-    } else {
-      return null;
     }
+    return null;
   } catch (error) {
+    // 修复：原实现在 catch 里没有 return，网络异常时返回 undefined，
+    // 会落到调用方的“解析失败”分支被当成应屏蔽处理，导致网络抖动时大面积误屏蔽。
     console.error("[🫥BlackList] API 请求失败:", error);
+    return null;
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 }
 /**
@@ -132,13 +159,88 @@ function addTNameButtonToGroup(group, tagName, card) {
 }
 
 /**
+ * 请求接口并把分类标签按钮挂到卡片上。
+ * 主判定与“补标签”两条路径共用。
+ * @param {HTMLElement} card - 视频卡片元素。
+ * @param {string} bvId - 卡片对应的 BV。
+ * @returns {Promise<{data: object|null, tnameResolved: boolean, usedNetwork: boolean}>}
+ *   data: 接口数据；tnameResolved: 是否解析出至少一个分类标签；usedNetwork: 本次是否真的发了请求。
+ */
+async function attachTNameGroupToCard(card, bvId) {
+  const usedNetwork = !hasFreshBvApiCache(bvId);
+  const data = await getBilibiliVideoApiData(bvId);
+  let tnameResolved = false;
+
+  if (data) {
+    if (card.querySelector(".bilibili-blacklist-tname-group")) {
+      tnameResolved = true;
+    } else {
+      // 用 ensureBlockContainerOnCard 而不是 querySelector：解析不到 UP 名的卡片没有容器，
+      // 旧实现会因此永远挂不上标签 → 被判为“tname 解析失败”→ 误屏蔽。
+      const container = ensureBlockContainerOnCard(card);
+      if (container) {
+        const tnameGroup = document.createElement("div");
+        tnameGroup.className = "bilibili-blacklist-tname-group";
+        let hasTname = false;
+
+        // 去重添加标签按钮：同一来源/tid 映射出的不同名字重复时只保留一个
+        hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
+        hasTname =
+          addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
+        if (data.tid_v2) {
+          const obj = getTagNameById(data.tid_v2);
+          if (obj) {
+            hasTname =
+              addTNameButtonToGroup(tnameGroup, obj.name, card) || hasTname;
+            hasTname =
+              addTNameButtonToGroup(tnameGroup, obj.name_v2, card) || hasTname;
+          }
+        }
+        if (hasTname) {
+          container.appendChild(tnameGroup);
+          tnameResolved = true;
+        }
+      }
+    }
+  }
+
+  return { data, tnameResolved, usedNetwork };
+}
+
+/**
  * 处理视频卡片队列进行屏蔽。
+ *
+ * 判定顺序刻意分成两个阶段：
+ *   阶段 A（零网络）：软广链接 > UP主名精确匹配 > 正则匹配。命中即可直接提交，
+ *                    不发任何请求、也不需要限速等待。
+ *   阶段 B（网络）  ：仅当阶段 A 未命中时，才请求 view 接口做分类标签/竖屏判定。
+ * 已在阶段 A 命中的卡片，若开启 flagAlwaysFetchTName（默认开），会被放进低优先级的
+ * “补标签队列”，等主队列判定完再补请求，保证标签按钮始终可见但不拖慢其它卡片的判定。
  */
 async function processVideoCardQueue() {
   if (isVideoCardQueueProcessing) return;
   isVideoCardQueueProcessing = true;
+  let localDecisionStreak = 0; // 连续“零网络判定”的卡片数，用于定期让出主线程
 
-  while (videoCardProcessQueue.size > 0) {
+  while (videoCardProcessQueue.size > 0 || tnameDecorateQueue.size > 0) {
+    // ===== 补标签队列：优先级最低，只有主队列空了才处理 =====
+    if (videoCardProcessQueue.size === 0) {
+      const decorateIterator = tnameDecorateQueue.values();
+      const decorateCard = decorateIterator.next().value;
+      tnameDecorateQueue.delete(decorateCard);
+      if (!decorateCard || decorateCard.isConnected === false) continue;
+      if (decorateCard.querySelector(".bilibili-blacklist-tname-group")) continue;
+      const decorateBvId = getLinkBvId(getCardHrefLink(decorateCard));
+      if (!decorateBvId) continue;
+      const decorateResult = await attachTNameGroupToCard(
+        decorateCard,
+        decorateBvId
+      );
+      if (decorateResult.usedNetwork) {
+        await sleep(globalPluginConfig.processQueueInterval);
+      }
+      continue;
+    }
 
     const iterator = videoCardProcessQueue.values();
     const card = iterator.next().value;
@@ -147,121 +249,112 @@ async function processVideoCardQueue() {
     if (!card || processedVideoCards.has(card)) {
       continue;
     }
+    // 翻页/切集后旧卡片已从文档移除：直接丢弃。
+    // 否则它们照样各消耗一次 API 请求 + 一次限速等待，把新一页的卡片堵在队尾。
+    // 用 === false 而不是 !card.isConnected：万一环境不支持 isConnected（undefined），
+    // 取反会把所有卡片都跳过，等于整个屏蔽功能失效。
+    if (card.isConnected === false) {
+      continue;
+    }
 
+    let usedNetwork = false; // 本轮是否真的发起了网络请求（决定是否需要限速等待）
     let shouldHide = false;
     let blockType = "none";
-    // 如果启用了标签屏蔽且当前卡片未被隐藏
+
+    // ===== 阶段 A：零网络判定（软广链接 > UP主名精确 > 正则）=====
     const link = getCardHrefLink(card);
     if (checkLinkCM(link)) {
       shouldHide = true;
       blockType = "cm";
     }
     const { upName, videoTitle } = getVideoCardInfo(card);
-    // 依据 UP 名/标题判定：只要解析到其中一个就参与判定（isBlacklisted 内部对空值有兜底，
-    // 空 UP 名也能用正则匹标题，标题解析失败也能用 UP 名精确匹配）。
-    // 若两者都解析不到，则无法确定应屏蔽，后面会恢复显示——避免“无法解析就被永久隐藏”的误伤。
-    if (!shouldHide && (upName || videoTitle)) {
-      // 如果UP主名称或标题在黑名单中，且启用了信息屏蔽
-      if (isBlacklisted(upName, videoTitle) && globalPluginConfig.flagInfo) {
+    // 依据 UP 名/标题判定：只要解析到其中一个就参与判定（空 UP 名也能用正则匹标题，
+    // 标题解析失败也能用 UP 名精确匹配）。两者都解析不到则交给阶段 B，避免误伤。
+    if (!shouldHide && globalPluginConfig.flagInfo && (upName || videoTitle)) {
+      if (isExactBlacklisted(upName)) {
+        shouldHide = true;
+        blockType = "info";
+      } else if (isRegexBlacklisted(upName, videoTitle)) {
         shouldHide = true;
         blockType = "info";
       }
     }
 
+    const bvId = getLinkBvId(link);
+    const hasTNameGroup = !!card.querySelector(".bilibili-blacklist-tname-group");
+
+    // ===== 阶段 B：网络判定（分类标签 / 竖屏）=====
     if (
+      !shouldHide &&
       (globalPluginConfig.flagTName || globalPluginConfig.flagVertical) &&
-      !shouldHide
+      bvId &&
+      !hasTNameGroup
     ) {
-      const bvId = getLinkBvId(link);
-      // 如果存在BV ID且卡片尚未添加标签组
-      if (bvId && !card.querySelector(".bilibili-blacklist-tname-group")) {
-        const data = await getBilibiliVideoApiData(bvId);
-        if (data) {
-          let tnameResolved = false; // 是否成功解析出至少一个分类标签名
-          const container = card.querySelector(
-            ".bilibili-blacklist-block-container"
-          );
-          if (container) {
-            const tnameGroup = document.createElement("div");
-            tnameGroup.className = "bilibili-blacklist-tname-group";
-            let hasTname = false;
+      const result = await attachTNameGroupToCard(card, bvId);
+      usedNetwork = result.usedNetwork;
+      const data = result.data;
 
-            // 去重添加标签按钮：同一来源/tid 映射出的不同名字重复时只保留一个
-            hasTname = addTNameButtonToGroup(
-              tnameGroup,
-              data.tname,
-              card
-            ) || hasTname;
-            hasTname = addTNameButtonToGroup(
-              tnameGroup,
-              data.tname_v2,
-              card
-            ) || hasTname;
-            if (data.tid_v2) {
-              const obj = getTagNameById(data.tid_v2);
-              if (obj) {
-                hasTname = addTNameButtonToGroup(
-                  tnameGroup,
-                  obj.name,
-                  card
-                ) || hasTname;
-                hasTname = addTNameButtonToGroup(
-                  tnameGroup,
-                  obj.name_v2,
-                  card
-                ) || hasTname;
-              }
-            }
-            if (hasTname) {
-              container.appendChild(tnameGroup);
-              tnameResolved = true;
-            }
-          }
-
-          if (isCardBlacklistedByTagName(card)) {
+      if (data) {
+        if (isCardBlacklistedByTagName(card)) {
+          shouldHide = true;
+          blockType = "tname";
+        }
+        // 如果启用了垂直视频屏蔽
+        if (
+          !shouldHide &&
+          globalPluginConfig.flagVertical &&
+          data.dimension &&
+          data.dimension.width &&
+          data.dimension.height
+        ) {
+          const dimension = data.dimension.width / data.dimension.height;
+          if (dimension < globalPluginConfig.verticalScaleThreshold) {
             shouldHide = true;
-            blockType = "tname";
+            blockType = "vertical";
           }
-          // 如果启用了垂直视频屏蔽
-          if (
-            data.dimension &&
-            data.dimension.width &&
-            data.dimension.height &&
-            !shouldHide &&
-            globalPluginConfig.flagVertical
-          ) {
-            const dimension = data.dimension.width / data.dimension.height;
-            if (dimension < globalPluginConfig.verticalScaleThreshold) {
-              shouldHide = true;
-              blockType = "vertical";
-            }
-          }
+        }
 
-          // 开启了 tname 却没能解析出任何分类标签（数据缺失/结构变化）：
-          // 无法确定该卡是否命中分类黑名单，按保守策略——重排到队尾重试一次，再次失败则屏蔽。
-          if (globalPluginConfig.flagTName && !shouldHide && !tnameResolved) {
-            if (!tnameRetriedCards.has(card)) {
-              tnameRetriedCards.add(card);
-              videoCardProcessQueue.add(card); // 加入队列最后
-              continue;
-            }
-            shouldHide = true;
-            blockType = "tname";
-          }
-        } else if (globalPluginConfig.flagTName) {
-          // API 返回 null（请求失败/限流/BV无效）：tname 解析失败。
-          // 重排到队尾重试一次，再次失败则按屏蔽处理。
+        // 开启了 tname 却没能解析出任何分类标签（数据缺失/结构变化）：
+        // 无法确定该卡是否命中分类黑名单，按保守策略——重排到队尾重试一次，再次失败则屏蔽。
+        if (globalPluginConfig.flagTName && !shouldHide && !result.tnameResolved) {
           if (!tnameRetriedCards.has(card)) {
             tnameRetriedCards.add(card);
             videoCardProcessQueue.add(card); // 加入队列最后
+            if (usedNetwork) {
+              await sleep(globalPluginConfig.processQueueInterval);
+            }
             continue;
           }
           shouldHide = true;
           blockType = "tname";
         }
+      } else if (globalPluginConfig.flagTName) {
+        // 接口返回 null（请求失败/超时/限流/BV无效）：tname 解析失败。
+        // 重排到队尾重试一次，再次失败则按屏蔽处理。
+        if (!tnameRetriedCards.has(card)) {
+          tnameRetriedCards.add(card);
+          videoCardProcessQueue.add(card); // 加入队列最后
+          if (usedNetwork) {
+            await sleep(globalPluginConfig.processQueueInterval);
+          }
+          continue;
+        }
+        shouldHide = true;
+        blockType = "tname";
       }
+    } else if (
+      shouldHide &&
+      globalPluginConfig.flagAlwaysFetchTName &&
+      globalPluginConfig.flagTName &&
+      bvId &&
+      !hasTNameGroup
+    ) {
+      // 阶段 A 已命中：判定上不再需要接口。但按配置仍要显示分类标签按钮，
+      // 于是放进低优先级补标签队列，等主队列判定完再补，不占用判定时间。
+      tnameDecorateQueue.add(card);
     }
 
+    // ===== 提交 =====
     if (shouldHide) {
       // 命中：先去掉“未处理”filter 遮盖，再走正式遮蔽（hide / kirby 遮罩 / 模糊）
       clearPendingFilter(card);
@@ -270,9 +363,7 @@ async function processVideoCardQueue() {
       // 未命中：去掉“未处理”filter 遮盖，恢复原样显示
       clearPendingFilter(card);
       const realCardToDisplay = getRealVideoCardElement(card);
-      if (realCardToDisplay && blockedVideoCards.has(realCardToDisplay)) {
-        blockedVideoCards.delete(realCardToDisplay);
-      }
+      unmarkBlockedCard(realCardToDisplay);
       removeBlockReason(card);
       removeKirbyOverlay(card); // 幂等：清理可能残留的遮罩（不再依赖 flagKirby）
       if (realCardToDisplay) {
@@ -283,7 +374,18 @@ async function processVideoCardQueue() {
 
     processedVideoCards.add(card); // 标记卡片已处理
 
-    await sleep(globalPluginConfig.processQueueInterval);
+    // 只有真正发生网络请求时才限速：纯本地命中的卡片立即处理下一张。
+    // （旧实现对每张卡片无差别 sleep 200ms，一页 30 张仅等待就要 6 秒。）
+    if (usedNetwork) {
+      localDecisionStreak = 0;
+      await sleep(globalPluginConfig.processQueueInterval);
+    } else if (++localDecisionStreak >= 20) {
+      // 纯本地判定不限速，但连续处理很多张时主动让出主线程一次，
+      // 避免超长列表下形成长任务造成页面卡顿；顺便刷新一次计数显示。
+      localDecisionStreak = 0;
+      refreshBlockCountDisplay();
+      await sleep(0);
+    }
   }
   isVideoCardQueueProcessing = false;
   refreshBlockCountDisplay();
