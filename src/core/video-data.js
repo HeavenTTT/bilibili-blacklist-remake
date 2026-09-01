@@ -4,8 +4,11 @@
  * 队列串行处理，以及分类标签 / 竖屏的 API 判断。
  */
 // 记录“第一次 tname 解析失败、已被重排回队列重试”的卡片（弱引用，随卡片回收释放）。
-// 重试仍失败时按“无法确定是否安全”处理为屏蔽。
+// 重试仍失败时按“无法确定是否安全”处理为放行（不再屏蔽）。
 let tnameRetriedCards = new WeakSet();
+// 记录“视频标签接口第一次无返回、已被重排回队列重试”的卡片（弱引用）。
+// 重试仍失败时按“无法确定是否安全”处理为放行（不再屏蔽）。
+let videoTagRetriedCards = new WeakSet();
 /**
  * 获取视频卡片的链接。
  * @param {HTMLElement} cardElement - 视频卡片元素。
@@ -169,13 +172,16 @@ function normalizeVideoTagName(tag) {
     return name && !name.startsWith("#") ? name : null;
   }
   if (!tag || typeof tag !== "object") return null;
+  // 部分页面/接口会返回 tag_type / music_id，部分不会；
+  // 统一要求 tag_id 与 tag_name 都能找到才保留。
+  if (tag.tag_id === undefined || tag.tag_id === null) return null;
+  const name = String(tag.tag_name || "").trim();
+  if (!name || name.startsWith("#")) return null;
   const tagType = String(tag.tag_type || "").toLowerCase();
   if (tagType === "bgm" || tagType === "music" || tagType === "topic") {
     return null;
   }
   if (tag.music_id) return null;
-  const name = String(tag.tag_name || "").trim();
-  if (!name || name.startsWith("#")) return null;
   return name;
 }
 
@@ -239,6 +245,82 @@ function isCardBlacklistedByTagName(cardElement) {
 }
 
 /**
+ * 给标签组添加一个“汇总按钮 + 悬停浮层”：只显示一个「分类 N / 标签 M」按钮，
+ * 数量为 0 时不添加；悬停/点击该按钮时，在卡片内弹出浮层展示该类别的全部标签。
+ * 浮层作为标签组的子元素，内部按钮仍能被 getBlacklistedTagName/getBlacklistedVideoTag 匹配。
+ * @param {HTMLElement} group - .bilibili-blacklist-tname-group 容器。
+ * @param {string} label - 汇总按钮文案前缀（如“分类”/“标签”）。
+ * @param {HTMLElement[]} buttons - 该类别的按钮元素（会被移入浮层）。
+ * @param {string} color - 汇总按钮背景色。
+ * @param {HTMLElement} card - 视频卡片元素。
+ */
+function addTagSummary(group, label, buttons, color, card) {
+  if (!buttons || buttons.length === 0) return;
+
+  const summary = document.createElement("span");
+  summary.className = "bilibili-blacklist-tag-summary";
+  summary.textContent = label + " " + buttons.length;
+  summary.title = "展开" + label + "列表";
+  summary.style.backgroundColor = color;
+  group.appendChild(summary);
+
+  const popover = document.createElement("div");
+  popover.className = "bilibili-blacklist-tag-popover";
+  buttons.forEach((b) => popover.appendChild(b));
+  group.appendChild(popover);
+
+  let hideTimer = null;
+  let lastShowAt = 0;
+  // 悬停节流/防抖：300ms 内重复 show 只复用不重算定位；隐藏用 200ms 防抖避免抖动。
+  const HIDE_DELAY_MS = 200;
+  const SHOW_THROTTLE_MS = 300;
+  const positionPopover = () => {
+    popover.classList.add("show");
+    const cr = card.getBoundingClientRect();
+    // 宽度不超过卡片，避免被卡片溢出裁掉
+    popover.style.maxWidth = Math.min(280, Math.max(120, cr.width - 8)) + "px";
+    const gr = group.getBoundingClientRect();
+    const pw = popover.offsetWidth;
+    const ph = popover.offsetHeight;
+    let vLeft = gr.left + (gr.width - pw) / 2;
+    let vTop = gr.bottom + 4;
+    if (vLeft < cr.left + 4) vLeft = cr.left + 4;
+    if (vLeft + pw > cr.right - 4) vLeft = cr.right - 4 - pw;
+    if (vTop + ph > cr.bottom - 4) vTop = cr.bottom - 4 - ph;
+    if (vTop < cr.top + 4) vTop = cr.top + 4;
+    popover.style.left = vLeft - gr.left + "px";
+    popover.style.top = vTop - gr.top + "px";
+  };
+  const show = () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    const now = Date.now();
+    // 300ms 节流：快速进出同一卡片时，只确保显示，不重复 build/定位
+    if (now - lastShowAt >= SHOW_THROTTLE_MS) {
+      positionPopover();
+      lastShowAt = now;
+    } else {
+      popover.classList.add("show");
+    }
+  };
+  const hide = () => {
+    hideTimer = setTimeout(() => popover.classList.remove("show"), HIDE_DELAY_MS);
+  };
+  summary.addEventListener("mouseenter", show);
+  summary.addEventListener("mouseleave", hide);
+  popover.addEventListener("mouseenter", show);
+  popover.addEventListener("mouseleave", hide);
+  summary.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (popover.classList.contains("show")) {
+      popover.classList.remove("show");
+    } else {
+      show();
+    }
+  });
+}
+
+/**
  * 返回卡片上第一个命中的视频标签黑名单项。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  * @returns {string|null} 命中的视频标签名，没有则返回 null。
@@ -288,8 +370,9 @@ function addTNameButtonToGroup(group, tagName, card) {
  * 主判定与“补标签”两条路径共用。
  * @param {HTMLElement} card - 视频卡片元素。
  * @param {string} bvId - 卡片对应的 BV。
- * @returns {Promise<{data: object|null, tnameResolved: boolean, usedNetwork: boolean}>}
- *   data: 接口数据；tnameResolved: 是否解析出至少一个分类标签；usedNetwork: 本次是否真的发了请求。
+ * @returns {Promise<{data: object|null, tnameResolved: boolean, usedNetwork: boolean, viewFailed: boolean, videoTagFailed: boolean}>}
+ *   data: 接口数据；tnameResolved: 是否解析出至少一个分类标签；usedNetwork: 本次是否真的发了请求；
+ *   viewFailed / videoTagFailed: 对应接口本次是否无返回（供“重试一次 → 放行”判定）。
  */
 async function attachTNameGroupToCard(card, bvId) {
   const needViewApi =
@@ -298,16 +381,19 @@ async function attachTNameGroupToCard(card, bvId) {
   const usedNetwork =
     (needViewApi && !hasFreshBvApiCache(bvId)) ||
     (needVideoTagApi && !hasFreshBvTagApiCache(bvId));
-  const [viewData, videoTagData] = await Promise.all([
-    needViewApi ? getBilibiliVideoApiData(bvId) : Promise.resolve(null),
-    needVideoTagApi
-      ? getBilibiliVideoTagApiData(bvId)
-      : Promise.resolve(null),
-  ]);
+  // 串行获取：先 view（分类/竖屏），再 tag（视频标签），不并发。
+  const viewData = needViewApi ? await getBilibiliVideoApiData(bvId) : null;
+  const videoTagData = needVideoTagApi
+    ? await getBilibiliVideoTagApiData(bvId)
+    : null;
   const data =
     viewData || videoTagData
       ? { ...(viewData || {}), ...(videoTagData || {}) }
       : null;
+  // 两个接口的“本次是否无返回”（无返回 = code 非 0 / 请求失败 / 超时）：
+  // 供队列做“重试一次 → 放行”判定。
+  const viewFailed = needViewApi && viewData === null;
+  const videoTagFailed = needVideoTagApi && videoTagData === null;
   let tnameResolved = false;
 
   if (data) {
@@ -324,31 +410,50 @@ async function attachTNameGroupToCard(card, bvId) {
       if (container) {
         const tnameGroup = document.createElement("div");
         tnameGroup.className = "bilibili-blacklist-tname-group";
-        let hasTname = false;
-        let hasVideoTag = false;
 
-        // 去重添加标签按钮：同一来源/tid 映射出的不同名字重复时只保留一个
+        // 收集分类标签按钮（按文本去重）
+        const tnameButtons = [];
+        const pushTName = (name) => {
+          const s = String(name || "").trim();
+          if (!s) return;
+          if (tnameButtons.some((b) => b.textContent.trim() === s)) return;
+          tnameButtons.push(createTNameBlockButton(s, card));
+        };
         if (globalPluginConfig.flagTName) {
-          hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
-          hasTname =
-            addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
+          pushTName(data.tname);
+          pushTName(data.tname_v2);
         }
         if (globalPluginConfig.flagTName && data.tid_v2) {
           const obj = getTagNameById(data.tid_v2);
           if (obj) {
-            hasTname =
-              addTNameButtonToGroup(tnameGroup, obj.name, card) || hasTname;
-            hasTname =
-              addTNameButtonToGroup(tnameGroup, obj.name_v2, card) || hasTname;
+            pushTName(obj.name);
+            pushTName(obj.name_v2);
           }
         }
+
+        // 收集视频标签按钮（按文本去重）
+        const videoTagButtons = [];
+        const videoTagSeen = new Set();
         if (globalPluginConfig.flagVideoTag) {
           getEligibleVideoTags(data).forEach((tagName) => {
-            tnameGroup.appendChild(createVideoTagBlockButton(tagName, card));
-            hasVideoTag = true;
+            const s = String(tagName || "").trim();
+            if (!s || videoTagSeen.has(s)) return;
+            videoTagSeen.add(s);
+            videoTagButtons.push(createVideoTagBlockButton(s, card));
           });
         }
+
+        const hasTname = tnameButtons.length > 0;
+        const hasVideoTag = videoTagButtons.length > 0;
         if (hasTname || hasVideoTag) {
+          // 只显示两个汇总按钮（分类 N / 标签 M），数量为 0 则不显示；
+          // 悬停/点击时在卡片内弹出浮层展示各自全部值。
+          if (hasTname) {
+            addTagSummary(tnameGroup, "分类", tnameButtons, "#fb7299dd", card);
+          }
+          if (hasVideoTag) {
+            addTagSummary(tnameGroup, "标签", videoTagButtons, "#409effdd", card);
+          }
           container.appendChild(tnameGroup);
           tnameResolved = hasTname;
         }
@@ -356,7 +461,7 @@ async function attachTNameGroupToCard(card, bvId) {
     }
   }
 
-  return { data, tnameResolved, usedNetwork };
+  return { data, tnameResolved, usedNetwork, viewFailed, videoTagFailed };
 }
 
 /**
@@ -511,6 +616,25 @@ async function processVideoCardQueue() {
             blockType = "videoTag";
             blockReasonValue = matchedVideoTag;
           }
+          // 视频标签接口无返回：重排到队尾重试一次，再次失败则放行（不再屏蔽）。
+          if (
+            globalPluginConfig.flagVideoTag &&
+            !shouldHide &&
+            result.videoTagFailed
+          ) {
+            if (!videoTagRetriedCards.has(card)) {
+              videoTagRetriedCards.add(card);
+              videoCardProcessQueue.add(card); // 加入队列最后（重新出队时排到最后）
+              if (usedNetwork) {
+                await sleep(globalPluginConfig.processQueueInterval);
+              }
+              continue;
+            }
+            console.warn(
+              "[🫥BlackList] 视频标签接口无返回，按放行处理:",
+              bvId
+            );
+          }
           // 如果启用了垂直视频屏蔽
           if (
             !shouldHide &&
@@ -527,7 +651,7 @@ async function processVideoCardQueue() {
           }
 
           // 开启了 tname 却没能解析出任何分类标签（数据缺失/结构变化）：
-          // 无法确定该卡是否命中分类黑名单，按保守策略——重排到队尾重试一次，再次失败则屏蔽。
+          // 重排到队尾重试一次，再次失败则放行（不再按屏蔽处理）。
           if (globalPluginConfig.flagTName && !shouldHide && !result.tnameResolved) {
             if (!tnameRetriedCards.has(card)) {
               tnameRetriedCards.add(card);
@@ -537,22 +661,32 @@ async function processVideoCardQueue() {
               }
               continue;
             }
-            shouldHide = true;
-            blockType = "tname";
+            console.warn(
+              "[🫥BlackList] 分类标签解析失败，按放行处理:",
+              bvId
+            );
           }
-        } else if (globalPluginConfig.flagTName) {
-          // 接口返回 null（请求失败/超时/限流/BV无效）：tname 解析失败。
-          // 重排到队尾重试一次，再次失败则按屏蔽处理。
-          if (!tnameRetriedCards.has(card)) {
-            tnameRetriedCards.add(card);
+        } else if (
+          globalPluginConfig.flagTName ||
+          globalPluginConfig.flagVideoTag
+        ) {
+          // 接口返回 null（请求失败/超时/限流/BV无效）：分类/视频标签解析失败。
+          // 重排到队尾重试一次，再次失败则按放行处理（不再屏蔽）。
+          const retriedSet = globalPluginConfig.flagTName
+            ? tnameRetriedCards
+            : videoTagRetriedCards;
+          if (!retriedSet.has(card)) {
+            retriedSet.add(card);
             videoCardProcessQueue.add(card); // 加入队列最后
             if (usedNetwork) {
               await sleep(globalPluginConfig.processQueueInterval);
             }
             continue;
           }
-          shouldHide = true;
-          blockType = "tname";
+          console.warn(
+            "[🫥BlackList] 分类/视频标签接口均无返回，按放行处理:",
+            bvId
+          );
         }
       }
     } else if (
@@ -602,6 +736,10 @@ async function processVideoCardQueue() {
   }
   isVideoCardQueueProcessing = false;
   refreshBlockCountDisplay();
+  // 处理队列为空：触发分区表 feed 增量更新（popular / ranking，12 小时节流，内部自行判断）。
+  if (typeof updateTNameListFromFeed === "function") {
+    updateTNameListFromFeed();
+  }
 }
 
 // 异步等待函数

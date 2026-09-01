@@ -142,9 +142,13 @@ function saveGlobalConfigToStorage() {
 
 let tagNameList = GM_getValue("tagNameList", []);
 let tagListLastTime = GM_getValue("tLastTime", 0);
+let tagFeedLastTime = GM_getValue("tFeedLastTime", 0);
 function saveTagNameListToStorage() {
   GM_setValue("tagNameList", tagNameList);
   GM_setValue("tLastTime", Date.now());
+}
+function saveTagNameListOnly() {
+  GM_setValue("tagNameList", tagNameList);
 }
 
 function getTagNameById(id) {
@@ -197,6 +201,8 @@ function invalidateRegexCache() {
   regexCache.clear();
 }
 
+const TNAME_LIST_UPDATE_INTERVAL = 12 * 60 * 60 * 1000;
+
 function getTNameListFormVideoPage() {
   try {
     var channelKv = unsafeWindow.__INITIAL_STATE__.channelKv;
@@ -220,32 +226,16 @@ function getTNameListFormVideoPage() {
     }
     return result;
   } catch (e) {
-    console.error("[🫥BlackList] 获取频道数据失败:", e);
+    console.error('[🫥BlackList] 获取频道数据失败:', e);
     return [];
   }
 }
-function updateTNameList() {
-  if (tagNameList.length >= 1000) tagNameList = [];
-  if (tagNameList.length === 0) tagListLastTime = 0;
 
-  const now = Date.now();
-  if (now - tagListLastTime < 60000) {
-    console.log("[🫥BlackList] 标签名列表最近已更新，跳过本次更新。");
-    return;
-  }
-
-  const newList = getTNameListFormVideoPage();
-  if (newList.length === 0) {
-    console.warn("[🫥BlackList] 未能获取到新的标签名列表。");
-    return;
-  }
-
-  console.log(`[🫥BlackList] 获取到 ${newList.length} 个标签名，开始合并更新。`);
-
+function mergeTNameListItems(newList) {
   const existingMap = new Map();
   tagNameList.forEach(item => existingMap.set(String(item.id), item));
 
-  let updated = false;
+  let updated = 0;
   for (const item of newList) {
     const id = String(item.id);
     const name = item.name;
@@ -253,24 +243,126 @@ function updateTNameList() {
     if (!existingMap.has(id)) {
       tagNameList.push({ id: item.id, name, name_v2 });
       existingMap.set(id, { id: item.id, name, name_v2 });
-      updated = true;
+      updated++;
     } else {
       const existing = existingMap.get(id);
-      if (existing.name !== name) {
+      if (existing.name !== name || existing.name_v2 !== name_v2) {
         existing.name = name;
-        updated = true;
+        existing.name_v2 = name_v2;
+        updated++;
       }
     }
   }
+  return updated;
+}
+
+function updateTNameList() {
+  if (tagNameList.length >= 1000) tagNameList = [];
+  if (tagNameList.length === 0) tagListLastTime = 0;
+
+  const now = Date.now();
+  if (now - tagListLastTime < TNAME_LIST_UPDATE_INTERVAL) {
+    console.log('[🫥BlackList] 标签名列表最近已更新，跳过本次更新。');
+    return;
+  }
+
+  const newList = getTNameListFormVideoPage();
+  if (newList.length === 0) {
+    console.warn('[🫥BlackList] 未能获取到新的标签名列表。');
+    return;
+  }
+
+  console.log('[🫥BlackList] 获取到 ' + newList.length + ' 个标签名，开始合并更新。');
+
+  const updated = mergeTNameListItems(newList);
 
   if (updated) {
     saveTagNameListToStorage();
     tagListLastTime = now;
-    console.log("[🫥BlackList] 标签名列表已更新并保存。");
+    console.log('[🫥BlackList] 分区表已更新（新增/变更 ' + updated + ' 条）并保存。');
   } else {
-    console.log("[🫥BlackList] 标签名列表无变化，仅更新时间戳。");
+    console.log('[🫥BlackList] 标签名列表无变化，仅更新时间戳。');
     GM_setValue("tLastTime", now);
     tagListLastTime = now;
+  }
+}
+
+async function fetchTNameListFromFeed() {
+  const result = [];
+  const seenIds = new Set();
+  const urls = [
+    "https://api.bilibili.com/x/web-interface/popular?ps=20",
+    "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0",
+  ];
+
+  for (const url of urls) {
+    let controller = null;
+    let timer = null;
+    try {
+      controller =
+        typeof AbortController === "function" ? new AbortController() : null;
+      timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
+      const response = await fetch(
+        url,
+        controller ? { signal: controller.signal } : undefined
+      );
+      const json = await response.json();
+      if (json.code !== 0 || !json.data || !Array.isArray(json.data.list)) {
+        console.warn('[🫥BlackList] feed 接口返回异常: ' + url + ' code=' + json.code);
+        continue;
+      }
+      for (const item of json.data.list) {
+        const tidv2 = item.tidv2;
+        const tnamev2 = item.tnamev2;
+        if (tidv2 === undefined || tidv2 === null || !tnamev2) continue;
+        if (seenIds.has(String(tidv2))) continue;
+        seenIds.add(String(tidv2));
+        result.push({
+          id: tidv2,
+          name: String(item.pid_name_v2 || tnamev2),
+          name_v2: String(tnamev2),
+        });
+      }
+    } catch (error) {
+      console.error('[🫥BlackList] feed 接口请求失败: ' + url, error);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return result;
+}
+
+async function updateTNameListFromFeed() {
+  try {
+    if (tagNameList.length >= 1000) tagNameList = [];
+    if (tagNameList.length === 0) tagFeedLastTime = 0;
+
+    const now = Date.now();
+    if (now - tagFeedLastTime < TNAME_LIST_UPDATE_INTERVAL) {
+      return;
+    }
+
+    const newList = await fetchTNameListFromFeed();
+    if (newList.length === 0) {
+      console.warn('[🫥BlackList] feed 接口未返回可用的分区数据，本次不更新时间戳。');
+      return;
+    }
+
+    console.log(
+      '[🫥BlackList] feed 接口获取到 ' + newList.length + ' 个分区条目，开始合并更新。'
+    );
+    const updated = mergeTNameListItems(newList);
+    if (updated) {
+      saveTagNameListOnly();
+      tagFeedLastTime = now;
+      console.log('[🫥BlackList] feed 增量更新分区表（新增/变更 ' + updated + ' 条）并保存。');
+    } else {
+      GM_setValue("tFeedLastTime", now);
+      tagFeedLastTime = now;
+      console.log('[🫥BlackList] feed 分区表无变化，仅更新时间戳。');
+    }
+  } catch (error) {
+    console.error('[🫥BlackList] feed 增量更新分区表失败:', error);
   }
 }
 
@@ -972,6 +1064,7 @@ function hideAllCardsByVideoTag(tagName) {
 }
 
 let tnameRetriedCards = new WeakSet();
+let videoTagRetriedCards = new WeakSet();
 function getCardHrefLink(cardElement) {
   const hrefLink = cardElement.querySelector("a");
   if (hrefLink) {
@@ -1097,13 +1190,14 @@ function normalizeVideoTagName(tag) {
     return name && !name.startsWith("#") ? name : null;
   }
   if (!tag || typeof tag !== "object") return null;
+  if (tag.tag_id === undefined || tag.tag_id === null) return null;
+  const name = String(tag.tag_name || "").trim();
+  if (!name || name.startsWith("#")) return null;
   const tagType = String(tag.tag_type || "").toLowerCase();
   if (tagType === "bgm" || tagType === "music" || tagType === "topic") {
     return null;
   }
   if (tag.music_id) return null;
-  const name = String(tag.tag_name || "").trim();
-  if (!name || name.startsWith("#")) return null;
   return name;
 }
 
@@ -1151,6 +1245,69 @@ function isCardBlacklistedByTagName(cardElement) {
   return !!getBlacklistedTagName(cardElement);
 }
 
+function addTagSummary(group, label, buttons, color, card) {
+  if (!buttons || buttons.length === 0) return;
+
+  const summary = document.createElement("span");
+  summary.className = "bilibili-blacklist-tag-summary";
+  summary.textContent = label + " " + buttons.length;
+  summary.title = "展开" + label + "列表";
+  summary.style.backgroundColor = color;
+  group.appendChild(summary);
+
+  const popover = document.createElement("div");
+  popover.className = "bilibili-blacklist-tag-popover";
+  buttons.forEach((b) => popover.appendChild(b));
+  group.appendChild(popover);
+
+  let hideTimer = null;
+  let lastShowAt = 0;
+  const HIDE_DELAY_MS = 200;
+  const SHOW_THROTTLE_MS = 300;
+  const positionPopover = () => {
+    popover.classList.add("show");
+    const cr = card.getBoundingClientRect();
+    popover.style.maxWidth = Math.min(280, Math.max(120, cr.width - 8)) + "px";
+    const gr = group.getBoundingClientRect();
+    const pw = popover.offsetWidth;
+    const ph = popover.offsetHeight;
+    let vLeft = gr.left + (gr.width - pw) / 2;
+    let vTop = gr.bottom + 4;
+    if (vLeft < cr.left + 4) vLeft = cr.left + 4;
+    if (vLeft + pw > cr.right - 4) vLeft = cr.right - 4 - pw;
+    if (vTop + ph > cr.bottom - 4) vTop = cr.bottom - 4 - ph;
+    if (vTop < cr.top + 4) vTop = cr.top + 4;
+    popover.style.left = vLeft - gr.left + "px";
+    popover.style.top = vTop - gr.top + "px";
+  };
+  const show = () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    const now = Date.now();
+    if (now - lastShowAt >= SHOW_THROTTLE_MS) {
+      positionPopover();
+      lastShowAt = now;
+    } else {
+      popover.classList.add("show");
+    }
+  };
+  const hide = () => {
+    hideTimer = setTimeout(() => popover.classList.remove("show"), HIDE_DELAY_MS);
+  };
+  summary.addEventListener("mouseenter", show);
+  summary.addEventListener("mouseleave", hide);
+  popover.addEventListener("mouseenter", show);
+  popover.addEventListener("mouseleave", hide);
+  summary.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (popover.classList.contains("show")) {
+      popover.classList.remove("show");
+    } else {
+      show();
+    }
+  });
+}
+
 function getBlacklistedVideoTag(cardElement) {
   const videoTagElements = cardElement.querySelectorAll(
     ".bilibili-blacklist-video-tag"
@@ -1189,16 +1346,16 @@ async function attachTNameGroupToCard(card, bvId) {
   const usedNetwork =
     (needViewApi && !hasFreshBvApiCache(bvId)) ||
     (needVideoTagApi && !hasFreshBvTagApiCache(bvId));
-  const [viewData, videoTagData] = await Promise.all([
-    needViewApi ? getBilibiliVideoApiData(bvId) : Promise.resolve(null),
-    needVideoTagApi
-      ? getBilibiliVideoTagApiData(bvId)
-      : Promise.resolve(null),
-  ]);
+  const viewData = needViewApi ? await getBilibiliVideoApiData(bvId) : null;
+  const videoTagData = needVideoTagApi
+    ? await getBilibiliVideoTagApiData(bvId)
+    : null;
   const data =
     viewData || videoTagData
       ? { ...(viewData || {}), ...(videoTagData || {}) }
       : null;
+  const viewFailed = needViewApi && viewData === null;
+  const videoTagFailed = needVideoTagApi && videoTagData === null;
   let tnameResolved = false;
 
   if (data) {
@@ -1213,30 +1370,46 @@ async function attachTNameGroupToCard(card, bvId) {
       if (container) {
         const tnameGroup = document.createElement("div");
         tnameGroup.className = "bilibili-blacklist-tname-group";
-        let hasTname = false;
-        let hasVideoTag = false;
 
+        const tnameButtons = [];
+        const pushTName = (name) => {
+          const s = String(name || "").trim();
+          if (!s) return;
+          if (tnameButtons.some((b) => b.textContent.trim() === s)) return;
+          tnameButtons.push(createTNameBlockButton(s, card));
+        };
         if (globalPluginConfig.flagTName) {
-          hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
-          hasTname =
-            addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
+          pushTName(data.tname);
+          pushTName(data.tname_v2);
         }
         if (globalPluginConfig.flagTName && data.tid_v2) {
           const obj = getTagNameById(data.tid_v2);
           if (obj) {
-            hasTname =
-              addTNameButtonToGroup(tnameGroup, obj.name, card) || hasTname;
-            hasTname =
-              addTNameButtonToGroup(tnameGroup, obj.name_v2, card) || hasTname;
+            pushTName(obj.name);
+            pushTName(obj.name_v2);
           }
         }
+
+        const videoTagButtons = [];
+        const videoTagSeen = new Set();
         if (globalPluginConfig.flagVideoTag) {
           getEligibleVideoTags(data).forEach((tagName) => {
-            tnameGroup.appendChild(createVideoTagBlockButton(tagName, card));
-            hasVideoTag = true;
+            const s = String(tagName || "").trim();
+            if (!s || videoTagSeen.has(s)) return;
+            videoTagSeen.add(s);
+            videoTagButtons.push(createVideoTagBlockButton(s, card));
           });
         }
+
+        const hasTname = tnameButtons.length > 0;
+        const hasVideoTag = videoTagButtons.length > 0;
         if (hasTname || hasVideoTag) {
+          if (hasTname) {
+            addTagSummary(tnameGroup, "分类", tnameButtons, "#fb7299dd", card);
+          }
+          if (hasVideoTag) {
+            addTagSummary(tnameGroup, "标签", videoTagButtons, "#409effdd", card);
+          }
           container.appendChild(tnameGroup);
           tnameResolved = hasTname;
         }
@@ -1244,7 +1417,7 @@ async function attachTNameGroupToCard(card, bvId) {
     }
   }
 
-  return { data, tnameResolved, usedNetwork };
+  return { data, tnameResolved, usedNetwork, viewFailed, videoTagFailed };
 }
 
 async function processVideoCardQueue() {
@@ -1374,6 +1547,24 @@ async function processVideoCardQueue() {
             blockReasonValue = matchedVideoTag;
           }
           if (
+            globalPluginConfig.flagVideoTag &&
+            !shouldHide &&
+            result.videoTagFailed
+          ) {
+            if (!videoTagRetriedCards.has(card)) {
+              videoTagRetriedCards.add(card);
+              videoCardProcessQueue.add(card);
+              if (usedNetwork) {
+                await sleep(globalPluginConfig.processQueueInterval);
+              }
+              continue;
+            }
+            console.warn(
+              "[🫥BlackList] 视频标签接口无返回，按放行处理:",
+              bvId
+            );
+          }
+          if (
             !shouldHide &&
             globalPluginConfig.flagVertical &&
             data.dimension &&
@@ -1396,20 +1587,30 @@ async function processVideoCardQueue() {
               }
               continue;
             }
-            shouldHide = true;
-            blockType = "tname";
+            console.warn(
+              "[🫥BlackList] 分类标签解析失败，按放行处理:",
+              bvId
+            );
           }
-        } else if (globalPluginConfig.flagTName) {
-          if (!tnameRetriedCards.has(card)) {
-            tnameRetriedCards.add(card);
+        } else if (
+          globalPluginConfig.flagTName ||
+          globalPluginConfig.flagVideoTag
+        ) {
+          const retriedSet = globalPluginConfig.flagTName
+            ? tnameRetriedCards
+            : videoTagRetriedCards;
+          if (!retriedSet.has(card)) {
+            retriedSet.add(card);
             videoCardProcessQueue.add(card);
             if (usedNetwork) {
               await sleep(globalPluginConfig.processQueueInterval);
             }
             continue;
           }
-          shouldHide = true;
-          blockType = "tname";
+          console.warn(
+            "[🫥BlackList] 分类/视频标签接口均无返回，按放行处理:",
+            bvId
+          );
         }
       }
     } else if (
@@ -1450,6 +1651,9 @@ async function processVideoCardQueue() {
   }
   isVideoCardQueueProcessing = false;
   refreshBlockCountDisplay();
+  if (typeof updateTNameListFromFeed === "function") {
+    updateTNameListFromFeed();
+  }
 }
 
 function sleep(ms) {
@@ -1663,6 +1867,21 @@ function createBlacklistListItem(contentText, onRemoveClick) {
   return item;
 }
 
+function getListSearchKeyword(selector) {
+  const el = document.querySelector(selector);
+  return el ? (el.value || "").trim().toLowerCase() : "";
+}
+
+function createListSearchInput(id, placeholder, onInput) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.id = id;
+  input.placeholder = placeholder;
+  input.className = "bilibili-blacklist-search-input";
+  input.addEventListener("input", onInput);
+  return input;
+}
+
 function refreshExactMatchList() {
   if (!exactMatchListElement) {
     if (!isBlacklistPanelCreated()) {
@@ -1677,7 +1896,11 @@ function refreshExactMatchList() {
     }
   }
   exactMatchListElement.innerHTML = "";
-  exactMatchBlacklist.forEach((upName) => {
+  const exactKw = getListSearchKeyword("#bilibili-blacklist-exact-search");
+  const exactFiltered = exactKw
+    ? exactMatchBlacklist.filter((name) => name.toLowerCase().includes(exactKw))
+    : exactMatchBlacklist;
+  exactFiltered.forEach((upName) => {
     const item = createBlacklistListItem(upName, () => {
       removeFromExactBlacklist(upName);
     });
@@ -1691,6 +1914,11 @@ function refreshExactMatchList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无精确匹配屏蔽UP主";
+    exactMatchListElement.appendChild(empty);
+  } else if (exactFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     exactMatchListElement.appendChild(empty);
   }
 }
@@ -1709,9 +1937,14 @@ function refreshRegexMatchList() {
     }
   }
   regexMatchListElement.innerHTML = "";
-
-  regexMatchBlacklist.forEach((regex, index) => {
+  const regexKw = getListSearchKeyword("#bilibili-blacklist-regex-search");
+  const regexFiltered = regexKw
+    ? regexMatchBlacklist.filter((r) => r.toLowerCase().includes(regexKw))
+    : regexMatchBlacklist;
+  regexFiltered.forEach((regex) => {
     const item = createBlacklistListItem(regex, () => {
+      const index = regexMatchBlacklist.indexOf(regex);
+      if (index === -1) return;
       regexMatchBlacklist.splice(index, 1);
       saveBlacklistsToStorage();
       invalidateRegexCache();
@@ -1728,6 +1961,11 @@ function refreshRegexMatchList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无正则匹配屏蔽规则";
+    regexMatchListElement.appendChild(empty);
+  } else if (regexFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     regexMatchListElement.appendChild(empty);
   }
 }
@@ -1746,8 +1984,11 @@ function refreshTagNameList() {
     }
   }
   tagNameListElement.innerHTML = "";
-
-  tagNameBlacklist.forEach((tagName) => {
+  const tagNameKw = getListSearchKeyword("#bilibili-blacklist-tname-search");
+  const tagNameFiltered = tagNameKw
+    ? tagNameBlacklist.filter((n) => n.toLowerCase().includes(tagNameKw))
+    : tagNameBlacklist;
+  tagNameFiltered.forEach((tagName) => {
     const item = createBlacklistListItem(tagName, () => {
       removeFromTagNameBlacklist(tagName);
     });
@@ -1761,6 +2002,11 @@ function refreshTagNameList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无标签屏蔽规则";
+    tagNameListElement.appendChild(empty);
+  } else if (tagNameFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     tagNameListElement.appendChild(empty);
   }
 }
@@ -1779,8 +2025,13 @@ function refreshVideoTagList() {
     }
   }
   videoTagListElement.innerHTML = "";
-
-  videoTagBlacklist.forEach((tagName) => {
+  const videoTagKw = getListSearchKeyword(
+    "#bilibili-blacklist-video-tag-search"
+  );
+  const videoTagFiltered = videoTagKw
+    ? videoTagBlacklist.filter((n) => n.toLowerCase().includes(videoTagKw))
+    : videoTagBlacklist;
+  videoTagFiltered.forEach((tagName) => {
     const item = createBlacklistListItem(tagName, () => {
       removeFromVideoTagBlacklist(tagName);
     });
@@ -1794,6 +2045,11 @@ function refreshVideoTagList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无视频标签屏蔽规则";
+    videoTagListElement.appendChild(empty);
+  } else if (videoTagFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     videoTagListElement.appendChild(empty);
   }
 }
@@ -1947,9 +2203,9 @@ function refreshConfigSettings() {
   tempToggleContainer.appendChild(tempUnblockButton);
   configListElement.appendChild(tempToggleContainer);
 
-  const title = document.createElement("h4");
-  title.textContent = "全局配置开关(对之后新加载的卡片生效)";
-  configListElement.appendChild(title);
+  const switchTitle = document.createElement("h4");
+  switchTitle.textContent = "屏蔽类型开关";
+  configListElement.appendChild(switchTitle);
 
   configListElement.appendChild(
     createSettingToggleButton(
@@ -1972,6 +2228,28 @@ function refreshConfigSettings() {
       "通过 /x/tag/archive/tags 获取视频标签，并自动排除音乐和话题标签"
     )
   );
+  configListElement.appendChild(
+    createSettingToggleButton(
+      "屏蔽竖屏视频",
+      "flagVertical",
+      "通过请求API获取视频分辨率"
+    )
+  );
+  configListElement.appendChild(
+    createSettingToggleButton("屏蔽主页推荐", "flagAD", "直播/广告/分区推送")
+  );
+  configListElement.appendChild(
+    createSettingToggleButton(
+      "屏蔽主页视频软广",
+      "flagCM",
+      "cm.bilibili.com软广"
+    )
+  );
+
+  const dataTitle = document.createElement("h4");
+  dataTitle.textContent = "分类数据与缓存";
+  configListElement.appendChild(dataTitle);
+
   configListElement.appendChild(
     createSettingToggleButton(
       "始终获取分类标签",
@@ -2010,24 +2288,6 @@ function refreshConfigSettings() {
   configListElement.appendChild(tagNameListControlContainer);
 
   configListElement.appendChild(
-    createSettingToggleButton(
-      "屏蔽竖屏视频",
-      "flagVertical",
-      "通过请求API获取视频分辨率"
-    )
-  );
-  configListElement.appendChild(
-    createSettingToggleButton("屏蔽主页推荐", "flagAD", "直播/广告/分区推送")
-  );
-  configListElement.appendChild(
-    createSettingToggleButton(
-      "屏蔽主页视频软广",
-      "flagCM",
-      "cm.bilibili.com软广"
-    )
-  );
-
-  configListElement.appendChild(
     createSettingSelect(
       "自动连播遇到被屏蔽视频:",
       "flagSkipBlockedAutoplay",
@@ -2040,8 +2300,9 @@ function refreshConfigSettings() {
     )
   );
 
-  const hr = document.createElement("hr");
-  configListElement.appendChild(hr);
+  const displayTitle = document.createElement("h4");
+  displayTitle.textContent = "显示方式";
+  configListElement.appendChild(displayTitle);
 
   configListElement.appendChild(
     createSettingSelect(
@@ -2106,11 +2367,16 @@ function refreshConfigSettings() {
   );
   configListElement.appendChild(
     createSettingToggleButton(
-      "网络拦截(推荐接口)",
-      "flagNetworkIntercept",
-      "启用后拦截并改写推荐/相关接口响应，命中黑名单的条目不再下发（实验性，刷新页面后生效）。"
+      "加载时立即隐藏卡片",
+      "flagHideOnLoad",
+      "开启：新卡片立即隐藏（用 visibility 占位，减少重排闪烁），等分类/竖屏 API 判定完再统一显示——避免“先显示、后被屏蔽导致卡片重排”。关闭：卡片先显示，若稍后被判定屏蔽会产生一次重排（观感更突兀），但处理速度感更快。建议开启。"
     )
   );
+
+  const interactTitle = document.createElement("h4");
+  interactTitle.textContent = "交互";
+  configListElement.appendChild(interactTitle);
+
   configListElement.appendChild(
     createSettingToggleButton(
       "悬停后显示被遮挡视频",
@@ -2126,14 +2392,18 @@ function refreshConfigSettings() {
       { min: 0.1, max: 5, step: 0.1 }
     )
   );
+
+  const netTitle = document.createElement("h4");
+  netTitle.textContent = "网络与性能";
+  configListElement.appendChild(netTitle);
+
   configListElement.appendChild(
     createSettingToggleButton(
-      "加载时立即隐藏卡片",
-      "flagHideOnLoad",
-      "开启：新卡片立即隐藏（用 visibility 占位，减少重排闪烁），等分类/竖屏 API 判定完再统一显示——避免“先显示、后被屏蔽导致卡片重排”。关闭：卡片先显示，若稍后被判定屏蔽会产生一次重排（观感更突兀），但处理速度感更快。建议开启。"
+      "网络拦截(推荐接口)",
+      "flagNetworkIntercept",
+      "启用后拦截并改写推荐/相关接口响应，命中黑名单的条目不再下发（实验性，刷新页面后生效）。"
     )
   );
-
   configListElement.appendChild(
     createSettingInput(
       "卡片扫描间隔 (ms):",
@@ -2141,7 +2411,6 @@ function refreshConfigSettings() {
       "扫描新卡片的间隔时间，单位 ms。值越小，新卡片隐藏越快，但可能会增加CPU负担。建议值 200ms。"
     )
   );
-
   configListElement.appendChild(
     createSettingInput(
       "视频信息API请求间隔 (ms):",
@@ -2285,6 +2554,13 @@ function createBlacklistPanel() {
   addExactContainer.appendChild(exactInput);
   addExactContainer.appendChild(addExactBtn);
   exactContent.appendChild(addExactContainer);
+  exactContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-exact-search",
+      "搜索精确匹配列表（模糊匹配）",
+      refreshExactMatchList
+    )
+  );
 
   const addRegexContainer = document.createElement("div");
   addRegexContainer.className = "bilibili-blacklist-add-row";
@@ -2322,6 +2598,13 @@ function createBlacklistPanel() {
   regexHint.style.cssText =
     "font-size:12px;color:#999;margin:0 0 12px;line-height:1.5;";
   regexContent.appendChild(regexHint);
+  regexContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-regex-search",
+      "搜索正则匹配列表（模糊匹配）",
+      refreshRegexMatchList
+    )
+  );
 
   const addVideoTagContainer = document.createElement("div");
   addVideoTagContainer.className = "bilibili-blacklist-add-row";
@@ -2343,6 +2626,13 @@ function createBlacklistPanel() {
   addVideoTagContainer.appendChild(videoTagInput);
   addVideoTagContainer.appendChild(addVideoTagBtn);
   videoTagContent.appendChild(addVideoTagContainer);
+  videoTagContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-video-tag-search",
+      "搜索视频标签列表（模糊匹配）",
+      refreshVideoTagList
+    )
+  );
 
   exactMatchListElement = document.createElement("ul");
   exactMatchListElement.id = "bilibili-blacklist-exact-list";
@@ -2362,6 +2652,13 @@ function createBlacklistPanel() {
   refreshAllPanelTabs();
   exactContent.appendChild(exactMatchListElement);
   regexContent.appendChild(regexMatchListElement);
+  tnameContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-tname-search",
+      "搜索分类标签列表（模糊匹配）",
+      refreshTagNameList
+    )
+  );
   tnameContent.appendChild(tagNameListElement);
   videoTagContent.appendChild(videoTagListElement);
   configContent.appendChild(configListElement);
@@ -2470,6 +2767,7 @@ GM_addStyle(`
   .bilibili-blacklist-tname-group {
     display: flex;
     flex-direction: row;
+    position: relative;
     padding: 0 5px;
     gap: 3px;
     align-items: center;
@@ -2494,6 +2792,45 @@ GM_addStyle(`
     cursor: pointer;
   }
 
+  /* “分类 N / 标签 M”汇总按钮（颜色由 JS 内联指定） */
+  .bilibili-blacklist-tag-summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 20px;
+    padding: 0 6px;
+    box-sizing: border-box;
+    font-size: 12px;
+    line-height: 1;
+    color: #fff;
+    white-space: nowrap;
+    border-radius: 2px;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  /* 悬停/点击汇总按钮展开的覆盖浮层（在卡片内、可滚动） */
+  .bilibili-blacklist-tag-popover {
+    display: none;
+    position: absolute;
+    z-index: 10001;
+    max-height: 200px;
+    overflow: auto;
+    padding: 4px;
+    box-sizing: border-box;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+    align-content: flex-start;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 4px;
+    pointer-events: auto;
+  }
+  .bilibili-blacklist-tag-popover.show {
+    display: flex !important;
+  }
+
   /* ===== 修复视频卡片布局 ===== */
   .bili-video-card__cover {
     contain: layout !important;
@@ -2505,7 +2842,8 @@ GM_addStyle(`
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 500px;
+    width: 600px;
+    max-width: 80%;
     max-height: 80vh;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -2517,6 +2855,8 @@ GM_addStyle(`
     color: var(--text2, #000);
     background-color: var(--bg1, #fff);
     opacity: 0.85;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 
   #bilibili-blacklist-manager-panel h3,
@@ -2532,6 +2872,17 @@ GM_addStyle(`
   #bilibili-blacklist-manager-panel h4 {
     font-weight: bold;
     margin-bottom: 12px;
+  }
+
+  /* 插件配置页的分组标题（如“屏蔽类型开关”）加背景色，便于区分功能分组 */
+  #bilibili-blacklist-config-list h4 {
+    display: block;
+    padding: 6px 10px;
+    margin: 12px 0 8px;
+    background-color: #f2f3f5;
+    border-left: 3px solid #fb7299;
+    border-radius: 4px;
+    color: #333;
   }
 
   #bilibili-blacklist-manager-panel ul {
@@ -2566,6 +2917,11 @@ GM_addStyle(`
     padding: 8px;
     border: 1px solid #ddd;
     border-radius: 4px;
+  }
+
+  /* 屏蔽列表搜索框 */
+  .bilibili-blacklist-search-input {
+    margin-bottom: 8px;
   }
 
   #bilibili-blacklist-manager-panel select {

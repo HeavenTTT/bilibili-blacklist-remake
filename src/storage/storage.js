@@ -145,10 +145,16 @@ function saveGlobalConfigToStorage() {
 // 标签名列表：存储ID到名称的映射
 let tagNameList = GM_getValue("tagNameList", []); // 默认为空数组，每个条目为 { id, name , name_v2}
 let tagListLastTime = GM_getValue("tLastTime", 0);
-// 将标签名列表保存到存储中
+// feed（popular/ranking）增量更新分区表的独立 12h 节流时间戳，与 channelKv 更新分开。
+let tagFeedLastTime = GM_getValue("tFeedLastTime", 0);
+// 将标签名列表保存到存储中（同时刷新 channelKv 的 tLastTime 计时）
 function saveTagNameListToStorage() {
   GM_setValue("tagNameList", tagNameList);
   GM_setValue("tLastTime", Date.now());
+}
+// 仅保存标签名列表，不刷新 channelKv 的 tLastTime（供 feed 增量更新独立计时使用）
+function saveTagNameListOnly() {
+  GM_setValue("tagNameList", tagNameList);
 }
 
 // 根据ID查找标签名

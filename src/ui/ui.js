@@ -269,6 +269,33 @@ function createBlacklistListItem(contentText, onRemoveClick) {
 }
 
 /**
+ * 读取列表搜索框的关键词（小写、去空白）。
+ * @param {string} selector - 搜索输入框选择器。
+ * @returns {string}
+ */
+function getListSearchKeyword(selector) {
+  const el = document.querySelector(selector);
+  return el ? (el.value || "").trim().toLowerCase() : "";
+}
+
+/**
+ * 为屏蔽列表创建搜索输入框。
+ * @param {string} id - 输入框 id。
+ * @param {string} placeholder - 占位提示。
+ * @param {Function} onInput - 输入回调（一般直接刷新对应列表）。
+ * @returns {HTMLInputElement}
+ */
+function createListSearchInput(id, placeholder, onInput) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.id = id;
+  input.placeholder = placeholder;
+  input.className = "bilibili-blacklist-search-input";
+  input.addEventListener("input", onInput);
+  return input;
+}
+
+/**
  * 刷新面板中的精确匹配黑名单显示。
  */
 function refreshExactMatchList() {
@@ -285,7 +312,11 @@ function refreshExactMatchList() {
     }
   }
   exactMatchListElement.innerHTML = "";
-  exactMatchBlacklist.forEach((upName) => {
+  const exactKw = getListSearchKeyword("#bilibili-blacklist-exact-search");
+  const exactFiltered = exactKw
+    ? exactMatchBlacklist.filter((name) => name.toLowerCase().includes(exactKw))
+    : exactMatchBlacklist;
+  exactFiltered.forEach((upName) => {
     const item = createBlacklistListItem(upName, () => {
       removeFromExactBlacklist(upName);
     });
@@ -300,6 +331,11 @@ function refreshExactMatchList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无精确匹配屏蔽UP主";
+    exactMatchListElement.appendChild(empty);
+  } else if (exactFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     exactMatchListElement.appendChild(empty);
   }
 }
@@ -321,9 +357,14 @@ function refreshRegexMatchList() {
     }
   }
   regexMatchListElement.innerHTML = "";
-
-  regexMatchBlacklist.forEach((regex, index) => {
+  const regexKw = getListSearchKeyword("#bilibili-blacklist-regex-search");
+  const regexFiltered = regexKw
+    ? regexMatchBlacklist.filter((r) => r.toLowerCase().includes(regexKw))
+    : regexMatchBlacklist;
+  regexFiltered.forEach((regex) => {
     const item = createBlacklistListItem(regex, () => {
+      const index = regexMatchBlacklist.indexOf(regex);
+      if (index === -1) return;
       regexMatchBlacklist.splice(index, 1);
       saveBlacklistsToStorage();
       invalidateRegexCache();
@@ -341,6 +382,11 @@ function refreshRegexMatchList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无正则匹配屏蔽规则";
+    regexMatchListElement.appendChild(empty);
+  } else if (regexFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     regexMatchListElement.appendChild(empty);
   }
 }
@@ -362,8 +408,11 @@ function refreshTagNameList() {
     }
   }
   tagNameListElement.innerHTML = "";
-
-  tagNameBlacklist.forEach((tagName) => {
+  const tagNameKw = getListSearchKeyword("#bilibili-blacklist-tname-search");
+  const tagNameFiltered = tagNameKw
+    ? tagNameBlacklist.filter((n) => n.toLowerCase().includes(tagNameKw))
+    : tagNameBlacklist;
+  tagNameFiltered.forEach((tagName) => {
     const item = createBlacklistListItem(tagName, () => {
       removeFromTagNameBlacklist(tagName);
     });
@@ -378,6 +427,11 @@ function refreshTagNameList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无标签屏蔽规则";
+    tagNameListElement.appendChild(empty);
+  } else if (tagNameFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     tagNameListElement.appendChild(empty);
   }
 }
@@ -399,8 +453,13 @@ function refreshVideoTagList() {
     }
   }
   videoTagListElement.innerHTML = "";
-
-  videoTagBlacklist.forEach((tagName) => {
+  const videoTagKw = getListSearchKeyword(
+    "#bilibili-blacklist-video-tag-search"
+  );
+  const videoTagFiltered = videoTagKw
+    ? videoTagBlacklist.filter((n) => n.toLowerCase().includes(videoTagKw))
+    : videoTagBlacklist;
+  videoTagFiltered.forEach((tagName) => {
     const item = createBlacklistListItem(tagName, () => {
       removeFromVideoTagBlacklist(tagName);
     });
@@ -414,6 +473,11 @@ function refreshVideoTagList() {
     const empty = document.createElement("div");
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无视频标签屏蔽规则";
+    videoTagListElement.appendChild(empty);
+  } else if (videoTagFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "无匹配结果";
     videoTagListElement.appendChild(empty);
   }
 }
@@ -576,11 +640,11 @@ function refreshConfigSettings() {
   tempToggleContainer.appendChild(tempUnblockButton);
   configListElement.appendChild(tempToggleContainer);
 
-  const title = document.createElement("h4");
-  title.textContent = "全局配置开关(对之后新加载的卡片生效)";
-  configListElement.appendChild(title);
+  // ===== 分组 1：屏蔽类型开关 =====
+  const switchTitle = document.createElement("h4");
+  switchTitle.textContent = "屏蔽类型开关";
+  configListElement.appendChild(switchTitle);
 
-  // 添加配置切换按钮
   configListElement.appendChild(
     createSettingToggleButton(
       "屏蔽标题/Up主名",
@@ -602,6 +666,29 @@ function refreshConfigSettings() {
       "通过 /x/tag/archive/tags 获取视频标签，并自动排除音乐和话题标签"
     )
   );
+  configListElement.appendChild(
+    createSettingToggleButton(
+      "屏蔽竖屏视频",
+      "flagVertical",
+      "通过请求API获取视频分辨率"
+    )
+  );
+  configListElement.appendChild(
+    createSettingToggleButton("屏蔽主页推荐", "flagAD", "直播/广告/分区推送")
+  );
+  configListElement.appendChild(
+    createSettingToggleButton(
+      "屏蔽主页视频软广",
+      "flagCM",
+      "cm.bilibili.com软广"
+    )
+  );
+
+  // ===== 分组 2：分类数据与缓存 =====
+  const dataTitle = document.createElement("h4");
+  dataTitle.textContent = "分类数据与缓存";
+  configListElement.appendChild(dataTitle);
+
   configListElement.appendChild(
     createSettingToggleButton(
       "始终获取分类标签",
@@ -640,24 +727,6 @@ function refreshConfigSettings() {
   tagNameListControlContainer.appendChild(clearTagNameListButton);
   configListElement.appendChild(tagNameListControlContainer);
 
-  configListElement.appendChild(
-    createSettingToggleButton(
-      "屏蔽竖屏视频",
-      "flagVertical",
-      "通过请求API获取视频分辨率"
-    )
-  );
-  configListElement.appendChild(
-    createSettingToggleButton("屏蔽主页推荐", "flagAD", "直播/广告/分区推送")
-  );
-  configListElement.appendChild(
-    createSettingToggleButton(
-      "屏蔽主页视频软广",
-      "flagCM",
-      "cm.bilibili.com软广"
-    )
-  );
-
   // 自动连播遇到被屏蔽视频的处理方式
   configListElement.appendChild(
     createSettingSelect(
@@ -672,9 +741,10 @@ function refreshConfigSettings() {
     )
   );
 
-  //分割线
-  const hr = document.createElement("hr");
-  configListElement.appendChild(hr);
+  // ===== 分组 3：显示方式 =====
+  const displayTitle = document.createElement("h4");
+  displayTitle.textContent = "显示方式";
+  configListElement.appendChild(displayTitle);
 
   configListElement.appendChild(
     createSettingSelect(
@@ -740,11 +810,17 @@ function refreshConfigSettings() {
   );
   configListElement.appendChild(
     createSettingToggleButton(
-      "网络拦截(推荐接口)",
-      "flagNetworkIntercept",
-      "启用后拦截并改写推荐/相关接口响应，命中黑名单的条目不再下发（实验性，刷新页面后生效）。"
+      "加载时立即隐藏卡片",
+      "flagHideOnLoad",
+      "开启：新卡片立即隐藏（用 visibility 占位，减少重排闪烁），等分类/竖屏 API 判定完再统一显示——避免“先显示、后被屏蔽导致卡片重排”。关闭：卡片先显示，若稍后被判定屏蔽会产生一次重排（观感更突兀），但处理速度感更快。建议开启。"
     )
   );
+
+  // ===== 分组 4：交互 =====
+  const interactTitle = document.createElement("h4");
+  interactTitle.textContent = "交互";
+  configListElement.appendChild(interactTitle);
+
   configListElement.appendChild(
     createSettingToggleButton(
       "悬停后显示被遮挡视频",
@@ -760,14 +836,19 @@ function refreshConfigSettings() {
       { min: 0.1, max: 5, step: 0.1 }
     )
   );
+
+  // ===== 分组 5：网络与性能 =====
+  const netTitle = document.createElement("h4");
+  netTitle.textContent = "网络与性能";
+  configListElement.appendChild(netTitle);
+
   configListElement.appendChild(
     createSettingToggleButton(
-      "加载时立即隐藏卡片",
-      "flagHideOnLoad",
-      "开启：新卡片立即隐藏（用 visibility 占位，减少重排闪烁），等分类/竖屏 API 判定完再统一显示——避免“先显示、后被屏蔽导致卡片重排”。关闭：卡片先显示，若稍后被判定屏蔽会产生一次重排（观感更突兀），但处理速度感更快。建议开启。"
+      "网络拦截(推荐接口)",
+      "flagNetworkIntercept",
+      "启用后拦截并改写推荐/相关接口响应，命中黑名单的条目不再下发（实验性，刷新页面后生效）。"
     )
   );
-
   configListElement.appendChild(
     createSettingInput(
       "卡片扫描间隔 (ms):",
@@ -775,7 +856,6 @@ function refreshConfigSettings() {
       "扫描新卡片的间隔时间，单位 ms。值越小，新卡片隐藏越快，但可能会增加CPU负担。建议值 200ms。"
     )
   );
-
   configListElement.appendChild(
     createSettingInput(
       "视频信息API请求间隔 (ms):",
@@ -937,6 +1017,13 @@ function createBlacklistPanel() {
   addExactContainer.appendChild(exactInput);
   addExactContainer.appendChild(addExactBtn);
   exactContent.appendChild(addExactContainer);
+  exactContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-exact-search",
+      "搜索精确匹配列表（模糊匹配）",
+      refreshExactMatchList
+    )
+  );
 
   // 正则匹配添加输入框和按钮
   const addRegexContainer = document.createElement("div");
@@ -975,6 +1062,13 @@ function createBlacklistPanel() {
   regexHint.style.cssText =
     "font-size:12px;color:#999;margin:0 0 12px;line-height:1.5;";
   regexContent.appendChild(regexHint);
+  regexContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-regex-search",
+      "搜索正则匹配列表（模糊匹配）",
+      refreshRegexMatchList
+    )
+  );
 
   // 视频标签添加输入框和按钮
   const addVideoTagContainer = document.createElement("div");
@@ -997,6 +1091,13 @@ function createBlacklistPanel() {
   addVideoTagContainer.appendChild(videoTagInput);
   addVideoTagContainer.appendChild(addVideoTagBtn);
   videoTagContent.appendChild(addVideoTagContainer);
+  videoTagContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-video-tag-search",
+      "搜索视频标签列表（模糊匹配）",
+      refreshVideoTagList
+    )
+  );
 
   // 创建列表元素
   exactMatchListElement = document.createElement("ul");
@@ -1017,6 +1118,13 @@ function createBlacklistPanel() {
   refreshAllPanelTabs(); // 初始化所有标签页内容
   exactContent.appendChild(exactMatchListElement);
   regexContent.appendChild(regexMatchListElement);
+  tnameContent.appendChild(
+    createListSearchInput(
+      "bilibili-blacklist-tname-search",
+      "搜索分类标签列表（模糊匹配）",
+      refreshTagNameList
+    )
+  );
   tnameContent.appendChild(tagNameListElement);
   videoTagContent.appendChild(videoTagListElement);
   configContent.appendChild(configListElement);
@@ -1129,6 +1237,7 @@ GM_addStyle(`
   .bilibili-blacklist-tname-group {
     display: flex;
     flex-direction: row;
+    position: relative;
     padding: 0 5px;
     gap: 3px;
     align-items: center;
@@ -1153,6 +1262,45 @@ GM_addStyle(`
     cursor: pointer;
   }
 
+  /* “分类 N / 标签 M”汇总按钮（颜色由 JS 内联指定） */
+  .bilibili-blacklist-tag-summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 20px;
+    padding: 0 6px;
+    box-sizing: border-box;
+    font-size: 12px;
+    line-height: 1;
+    color: #fff;
+    white-space: nowrap;
+    border-radius: 2px;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  /* 悬停/点击汇总按钮展开的覆盖浮层（在卡片内、可滚动） */
+  .bilibili-blacklist-tag-popover {
+    display: none;
+    position: absolute;
+    z-index: 10001;
+    max-height: 200px;
+    overflow: auto;
+    padding: 4px;
+    box-sizing: border-box;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+    align-content: flex-start;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 4px;
+    pointer-events: auto;
+  }
+  .bilibili-blacklist-tag-popover.show {
+    display: flex !important;
+  }
+
   /* ===== 修复视频卡片布局 ===== */
   .bili-video-card__cover {
     contain: layout !important;
@@ -1164,7 +1312,8 @@ GM_addStyle(`
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 500px;
+    width: 600px;
+    max-width: 80%;
     max-height: 80vh;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -1176,6 +1325,8 @@ GM_addStyle(`
     color: var(--text2, #000);
     background-color: var(--bg1, #fff);
     opacity: 0.85;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 
   #bilibili-blacklist-manager-panel h3,
@@ -1191,6 +1342,17 @@ GM_addStyle(`
   #bilibili-blacklist-manager-panel h4 {
     font-weight: bold;
     margin-bottom: 12px;
+  }
+
+  /* 插件配置页的分组标题（如“屏蔽类型开关”）加背景色，便于区分功能分组 */
+  #bilibili-blacklist-config-list h4 {
+    display: block;
+    padding: 6px 10px;
+    margin: 12px 0 8px;
+    background-color: #f2f3f5;
+    border-left: 3px solid #fb7299;
+    border-radius: 4px;
+    color: #333;
   }
 
   #bilibili-blacklist-manager-panel ul {
@@ -1225,6 +1387,11 @@ GM_addStyle(`
     padding: 8px;
     border: 1px solid #ddd;
     border-radius: 4px;
+  }
+
+  /* 屏蔽列表搜索框 */
+  .bilibili-blacklist-search-input {
+    margin-bottom: 8px;
   }
 
   #bilibili-blacklist-manager-panel select {
