@@ -1,5 +1,48 @@
 # 更新记录 (Changelog)
 
+## [未发布] - 播放页广告与视频卡片同节奏处理，切视频后重新处理广告
+
+### 变更
+- **播放页广告改为“先覆盖 → 等同样的初始化 → 再按选择行为屏蔽”**（与视频卡片一致的三段式）：
+  - **P0 预覆盖**：`ads.js` 求值期即注入 CSS 规则并给 `<html>` 加
+    `bilibili-blacklist-ad-pending`，用与卡片相同的 `PENDING_FILTER_STYLE`
+    （`blur(8px) grayscale(0.5) opacity(0.4)`，`core.js` 单一真源）把广告位罩住。
+    纯 CSS、不插 DOM、不改结构，因此不与 B 站 header 的 Vue 渲染竞争；**等待期内才被插入的
+    广告位也会在出现瞬间自动被罩住**，这是 CSS 方案相对逐元素 JS 遮盖的关键优势。
+  - **P1 等初始化**：不再单独处理，完全复用卡片那一套（`5s` + `.right-entry` 就绪），
+    时序未做任何改动。
+  - **P2 判定提交**：新增 `resolveVideoPageAds()`，按 `flagAD` +
+    `displayModeAD`/`blockDisplayMode` 决定遮蔽形态（hide / blur / kirby），
+    **全部判定完成后才解除预覆盖**，同帧提交，无闪烁。
+    `blockVideoPageAds()` 保留为兼容包装。
+- **切视频后重新处理广告（双触发）**：
+  - `observer.js` 在同一次 `addedNodes` 遍历里同时收集**新卡片**与**新广告元素**，
+    任一出现即合并调度一次广告处理；触发后走全量 `querySelectorAll`（由
+    `data-bl-ad-done` 去重），因此广告被包在未知容器里没被直接匹配到也能处理到。
+  - `pages.js` 新增 `watchVideoSwitch()` / `installVideoSwitchWatcher()`：
+    包装 `history.pushState/replaceState` 并监听 `popstate`，**用 URL 里的 BV**
+    （而非 `getCurrentBv()` 优先读的播放器，后者更新更晚）即时识别页面内切视频；
+    切换瞬间由 `onVideoSwitchedAds()` 重新加上预覆盖，等观察到新元素后判定并解除，
+    新页面没有广告插入时由 `1.5s` 兜底解除。
+- **观察器加固**：`observer.js` 记录 `observedRoot`/`observedTarget`，新增
+  `ensureObserverAttached()`；播放页 2.5s 兜底 tick 里检查观察根节点是否已被整体替换
+  （切视频时 `#right-container` 可能被换掉，此前会导致观察器绑在游离节点上、新卡片与
+  新广告全部漏处理），失效则自动重连。该 tick 同时补一次广告判定作为低频兜底。
+- **广告独立的容器创建方法**：新增 `ensureAdBlockContainer()`（`ads.js`），
+  不再走卡片专用的 `getBlockContainerHost()`（找 `.card-box` / `.bili-video-card`）。
+  只在广告元素 `position` 为 `static` 时才补 `relative` 并打 `data-bl-ad-pos` 标记，
+  已有定位上下文的广告位一律不动，避免破坏其浮动/绝对定位布局；仍复用
+  `bilibili-blacklist-block-container-host` class，**“屏蔽原因: 广告”标签行为不变**。
+- **调度合并**：观察器里“每批 mutation 各排一个 `setTimeout` 做广告全量重扫 + 重挂顶栏按钮”
+  改为合并调度（`scheduleVideoAdProcessing` / `scheduleMainPageAdProcessing` /
+  `scheduleHeaderButtonRefresh`），切视频时的 mutation 风暴不再产生大量重复定时器。
+  主页/搜索页广告改为“出现新卡片或新广告元素时”触发，不再每批 mutation 无条件重扫。
+
+### 已知取舍
+- 若 `.right-entry` 始终不出现（`waitForContainer` 超时后不回调，本次按要求未改动该时序），
+  播放页广告会与卡片一样**保持预覆盖状态**（模糊可见），而不是像以前那样完全裸露。
+- `blockedVideoCards` 仍是强引用 Set，切视频后旧节点会累积（计数按要求保持累计，未清理）。
+
 ## [0.7.6] - AI 作者 / 免责声明，测试方法仅 dev 构建生效
 
 ### 变更

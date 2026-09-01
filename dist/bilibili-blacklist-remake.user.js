@@ -292,6 +292,8 @@ let countBlockCM = 0;
 
 const pendingFilterCards = new WeakSet();
 
+const PENDING_FILTER_STYLE = "blur(8px) grayscale(0.5) opacity(0.4)";
+
 const UP_NAME_SELECTORS = [
   ".bili-video-card__info--author", 
   ".bili-video-card__author", 
@@ -368,7 +370,7 @@ const BLOCK_REASON_MAP = {
   if (!real) return;
   if (pendingFilterCards.has(real)) return; 
   pendingFilterCards.add(real);
-  real.style.filter = "blur(8px) grayscale(0.5) opacity(0.4)";
+  real.style.filter = PENDING_FILTER_STYLE;
 }
 
 function clearPendingFilter(cardElement) {
@@ -442,7 +444,14 @@ function hideVideoCard(cardElement, type = "none") {
 function setBlockReasonOnCard(cardElement, type) {
   const reasonText = BLOCK_REASON_MAP[type];
   if (!reasonText) return;
-    const container = ensureBlockContainerOnCard(cardElement);
+        const isVideoPageAd =
+    type === "ad" &&
+    isCurrentPageVideo() &&
+    typeof ensureAdBlockContainer === "function";
+  const container = isVideoPageAd
+    ? ensureAdBlockContainer(cardElement)
+    : ensureBlockContainerOnCard(cardElement);
+  if (!container) return;
   let reasonElement = container.querySelector(
     ".bilibili-blacklist-block-reason"
   );
@@ -2379,32 +2388,67 @@ function createSettingSelect(labelText, configKey, title = null, options = []) {
   }
 }
 
-
+
 const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
 const seenCards = new WeakSet();
+const seenAdElements = new WeakSet(); 
 let videoHeaderReady = false;
+let observedRoot = null; 
+let observedTarget = ""; 
+let headerButtonScheduled = false; 
+
+function collectMatchingElements(node, selectorText, out) {
+  if (!selectorText) return;
+  const self = node.closest ? node.closest(selectorText) : null;
+  if (self) {
+    out.push(self);
+    return;
+  }
+  const inside = node.querySelectorAll ? node.querySelectorAll(selectorText) : [];
+  for (let i = 0; i < inside.length; i++) out.push(inside[i]);
+}
+
+function scheduleHeaderButtonRefresh() {
+  if (headerButtonScheduled) return;
+  headerButtonScheduled = true;
+  setTimeout(() => {
+    headerButtonScheduled = false;
+    addBlacklistManagerButton(); 
+  }, globalPluginConfig.blockScanInterval);
+}
 
 const contentObserver = new MutationObserver((mutations) => {
-  const found = [];
+  const foundCards = [];
+  const foundAds = [];
+  const adSelectorText = isCurrentPageVideo()
+    ? VIDEO_AD_SELECTOR_TEXT
+    : MAIN_AD_SELECTOR_TEXT;
+
   mutations.forEach((mutation) => {
     const addedNodes = mutation.addedNodes;
     for (let i = 0; i < addedNodes.length; i++) {
       const node = addedNodes[i];
-      if (node.nodeType !== 1) continue;   
-            const self = node.closest ? node.closest(INCREMENTAL_CARD_SELECTOR) : null;
-      if (self) { found.push(self); continue; }
-            const inside = node.querySelectorAll ? node.querySelectorAll(INCREMENTAL_CARD_SELECTOR) : [];
-      for (let j = 0; j < inside.length; j++) found.push(inside[j]);
+      if (node.nodeType !== 1) continue; 
+      collectMatchingElements(node, INCREMENTAL_CARD_SELECTOR, foundCards);
+      collectMatchingElements(node, adSelectorText, foundAds);
     }
   });
 
     const fresh = [];
-  for (let k = 0; k < found.length; k++) {
-    const card = found[k];
+  for (let k = 0; k < foundCards.length; k++) {
+    const card = foundCards[k];
     if (seenCards.has(card)) continue;
     seenCards.add(card);
     fresh.push(card);
-    processCard(card);   
+    processCard(card); 
+  }
+
+      let freshAdCount = 0;
+  for (let k = 0; k < foundAds.length; k++) {
+    const adElement = foundAds[k];
+    if (seenAdElements.has(adElement)) continue;
+    seenAdElements.add(adElement);
+    freshAdCount++;
   }
 
     if (fresh.length > 0) {
@@ -2415,14 +2459,18 @@ const contentObserver = new MutationObserver((mutations) => {
     if (isCurrentPageMain()) fixMainPageLayout();
   }
 
-      setTimeout(() => {
-    addBlacklistManagerButton();
-    if (isCurrentPageMain()) blockMainPageAds();
-    if (isCurrentPageVideo()) blockVideoPageAds();
-  }, globalPluginConfig.blockScanInterval);
+    if (fresh.length > 0 || freshAdCount > 0) {
+    if (isCurrentPageVideo()) {
+      scheduleVideoAdProcessing();
+    } else if (isCurrentPageMain() || isCurrentPageSearch()) {
+      scheduleMainPageAdProcessing();
+    }
+  }
+
+    scheduleHeaderButtonRefresh();
 });
 
-function waitForContainer(selector, onFound, intervalMs = 250, timeoutMs = 15000) {
+function waitForContainer(selector, onFound, intervalMs = 250, timeoutMs = 15000) {
   const find = () => {
     const el = document.getElementById(selector) || document.querySelector(selector);
     if (el) {
@@ -2436,12 +2484,14 @@ const contentObserver = new MutationObserver((mutations) => {
   find();
 }
 
-function initializeObserver(containerIdOrSelector) {
+function initializeObserver(containerIdOrSelector) {
+  observedTarget = containerIdOrSelector;
   const rootNode =
     document.getElementById(containerIdOrSelector) ||
     document.querySelector(containerIdOrSelector);
 
   if (rootNode) {
+    observedRoot = rootNode;
     contentObserver.observe(rootNode, {
       childList: true,
       subtree: true,
@@ -2455,6 +2505,7 @@ const contentObserver = new MutationObserver((mutations) => {
       containerIdOrSelector
     );
     waitForContainer(containerIdOrSelector, (el) => {
+      observedRoot = el;
       contentObserver.observe(el, {
         childList: true,
         subtree: true,
@@ -2463,10 +2514,21 @@ const contentObserver = new MutationObserver((mutations) => {
     return;
   }
 
-    contentObserver.observe(document.documentElement, {
+    observedRoot = document.documentElement;
+  contentObserver.observe(document.documentElement, {
     childList: true,
     subtree: true,
   });
+}
+
+function ensureObserverAttached() {
+  if (!observedTarget) return false;
+  if (observedRoot && observedRoot.isConnected) return false;
+  console.log("[🫥BlackList] 观察根节点已失效，重新绑定观察器:", observedTarget);
+  contentObserver.disconnect();
+  observedRoot = null;
+  initializeObserver(observedTarget);
+  return true;
 }
 
 function initializeScript() {
@@ -2547,6 +2609,7 @@ document.addEventListener("DOMContentLoaded", initializeScript);
   globalPluginConfig.flagSkipBlockedAutoplay = "off";
 
     markAllVideoCardsPending();
+      markVideoPageAdsPending();
 
     
   videoHeaderReady = false;
@@ -2563,10 +2626,16 @@ document.addEventListener("DOMContentLoaded", initializeScript);
 
 function startVideoPageProcessing(flag) {
   initializeObserver("right-container"); 
-    scanAndBlockVideoCards();
-  blockVideoPageAds();
+      scanAndBlockVideoCards();
+  resolveVideoPageAds();
+    lastSeenVideoBv = getVideoSwitchKey();
+  installVideoSwitchWatcher();
     setInterval(() => {
     scanAndBlockVideoCards();
+        ensureObserverAttached();
+            if (!watchVideoSwitch()) {
+      resolveVideoPageAds(); 
+    }
   }, 2500);
     initAutoplaySkip();
     setTimeout(() => {
@@ -2575,6 +2644,58 @@ document.addEventListener("DOMContentLoaded", initializeScript);
     }
   }, 2500);
   console.log("[🫥BlackList] 视频播放页屏蔽功能已启动（header 已正常）。🍇");
+}
+
+let lastSeenVideoBv = "";
+let videoSwitchWatcherInstalled = false;
+
+function getVideoSwitchKey() {
+  if (typeof getBvFromUrl === "function") {
+    const bvFromUrl = getBvFromUrl();
+    if (bvFromUrl) return bvFromUrl;
+  }
+  if (typeof getCurrentBv === "function") {
+    return getCurrentBv() || "";
+  }
+  return "";
+}
+
+function watchVideoSwitch() {
+  if (!isCurrentPageVideo()) return false;
+  const bv = getVideoSwitchKey();
+  if (!bv) return false;
+  if (!lastSeenVideoBv) {
+    lastSeenVideoBv = bv;
+    return false;
+  }
+  if (bv === lastSeenVideoBv) return false;
+  lastSeenVideoBv = bv;
+  console.log("[🫥BlackList] 检测到页面内切换视频，广告重新覆盖并等待新元素:", bv);
+  onVideoSwitchedAds();
+  return true;
+}
+
+function installVideoSwitchWatcher() {
+  if (videoSwitchWatcherInstalled) return;
+  videoSwitchWatcherInstalled = true;
+  window.addEventListener("popstate", watchVideoSwitch);
+  try {
+    ["pushState", "replaceState"].forEach((method) => {
+      const original = history[method];
+      if (typeof original !== "function") return;
+      history[method] = function () {
+        const result = original.apply(this, arguments);
+        try {
+          watchVideoSwitch();
+        } catch (e) {
+          console.error("[🫥BlackList] 切视频检测出错:", e);
+        }
+        return result;
+      };
+    });
+  } catch (e) {
+    console.warn("[🫥BlackList] 无法包装 history 方法，改由定时兜底检测切视频:", e);
+  }
 }
 
 
@@ -2674,41 +2795,156 @@ document.addEventListener("DOMContentLoaded", initializeScript);
   upNameElement.appendChild(button);
 }
 
-function blockMainPageAds() {
+
+
+const MAIN_AD_SELECTORS = [
+  ".floor-single-card", 
+  ".bili-live-card", 
+  ".btn-ad", 
+];
+const MAIN_AD_SELECTOR_TEXT = MAIN_AD_SELECTORS.join(", ");
+
+const VIDEO_AD_SELECTORS = [
+  ".video-card-ad-small", 
+  ".slide-ad-exp", 
+  ".video-page-game-card-small", 
+  ".activity-m-v1", 
+  ".video-page-special-card-small", 
+  ".ad-floor-exp", 
+  ".btn-ad", 
+  ".video-page-operator-card-small", 
+  ".ad-report", 
+  ".slide_ad", 
+];
+const VIDEO_AD_SELECTOR_TEXT = VIDEO_AD_SELECTORS.join(", ");
+
+const AD_DONE_ATTR = "data-bl-ad-done";
+const AD_PENDING_CLASS = "bilibili-blacklist-ad-pending";
+const VIDEO_AD_PENDING_MAX_MS = 1500;
+
+let videoAdProcessScheduled = false; 
+let mainAdProcessScheduled = false; 
+let videoAdPendingReleaseTimer = null; 
+
+GM_addStyle(`
+  ${VIDEO_AD_SELECTORS.map(
+    (selector) => `html.${AD_PENDING_CLASS} ${selector}:not([${AD_DONE_ATTR}])`
+  ).join(",\n  ")} {
+    filter: ${PENDING_FILTER_STYLE} !important;
+    pointer-events: none !important;
+  }
+`);
+
+function isVideoAdElement(element) {
+  return !!(
+    element &&
+    element.nodeType === 1 &&
+    typeof element.matches === "function" &&
+    element.matches(VIDEO_AD_SELECTOR_TEXT)
+  );
+}
+
+function ensureAdBlockContainer(adElement) {
+  if (!adElement || adElement.nodeType !== 1) return null;
+  const existing = adElement.querySelector(
+    ".bilibili-blacklist-block-container"
+  );
+  if (existing) return existing;
+
+  const hostStyle = getComputedStyle(adElement);
+  if (hostStyle.position === "static" || !hostStyle.position) {
+    adElement.style.position = "relative";
+    adElement.setAttribute("data-bl-ad-pos", "1");
+  }
+  adElement.classList.add("bilibili-blacklist-block-container-host");
+
+  const container = document.createElement("div");
+  container.classList.add("bilibili-blacklist-block-container");
+  adElement.appendChild(container);
+  return container;
+}
+
+function markVideoPageAdsPending() {
+  if (!isCurrentPageVideo()) return;
+  if (!globalPluginConfig.flagAD) return;
+  if (!globalPluginConfig.flagHideOnLoad) return;
+  if (isShowAllVideos) return;
+  document.documentElement.classList.add(AD_PENDING_CLASS);
+}
+
+function clearVideoPageAdsPending() {
+  if (videoAdPendingReleaseTimer) {
+    clearTimeout(videoAdPendingReleaseTimer);
+    videoAdPendingReleaseTimer = null;
+  }
+  document.documentElement.classList.remove(AD_PENDING_CLASS);
+}
+
+function resolveAdElement(adElement) {
+  if (!adElement || adElement.nodeType !== 1) return false;
+    if (!globalPluginConfig.flagAD) return false;
+  if (adElement.hasAttribute(AD_DONE_ATTR)) return false;
+  adElement.setAttribute(AD_DONE_ATTR, "1");
+    hideVideoCard(adElement, "ad");
+  return true;
+}
+
+function resolveVideoPageAds() {
+  if (!isCurrentPageVideo()) return 0;
+  let blockedCount = 0;
+  document.querySelectorAll(VIDEO_AD_SELECTOR_TEXT).forEach((adElement) => {
+    if (resolveAdElement(adElement)) blockedCount++;
+  });
+    clearVideoPageAdsPending();
+  if (blockedCount > 0) {
+    refreshBlockCountDisplay();
+  }
+  return blockedCount;
+}
+
+function scheduleVideoAdProcessing() {
+  if (!isCurrentPageVideo()) return;
+  if (videoAdProcessScheduled) return;
+  videoAdProcessScheduled = true;
+  setTimeout(() => {
+    videoAdProcessScheduled = false;
+            if (!videoHeaderReady) return;
+    resolveVideoPageAds();
+  }, globalPluginConfig.blockScanInterval);
+}
+
+function scheduleMainPageAdProcessing() {
+  if (mainAdProcessScheduled) return;
+  mainAdProcessScheduled = true;
+  setTimeout(() => {
+    mainAdProcessScheduled = false;
+    blockMainPageAds();
+  }, globalPluginConfig.blockScanInterval);
+}
+
+function onVideoSwitchedAds() {
+  if (!isCurrentPageVideo()) return;
+  if (!globalPluginConfig.flagAD || isShowAllVideos) return;
+  document.documentElement.classList.add(AD_PENDING_CLASS);
+  if (videoAdPendingReleaseTimer) clearTimeout(videoAdPendingReleaseTimer);
+  videoAdPendingReleaseTimer = setTimeout(() => {
+    videoAdPendingReleaseTimer = null;
+    resolveVideoPageAds();
+  }, VIDEO_AD_PENDING_MAX_MS);
+}
+
+function blockMainPageAds() {
   if (!globalPluginConfig.flagAD) return; 
-  const adSelectors = [
-    ".floor-single-card", 
-    ".bili-live-card", 
-    ".btn-ad", 
-  ];
-  adSelectors.forEach((selector) => {
-    document.querySelectorAll(selector).forEach((adCard) => {
-      hideVideoCard(adCard, "ad"); 
-    });
+  document.querySelectorAll(MAIN_AD_SELECTOR_TEXT).forEach((adCard) => {
+    hideVideoCard(adCard, "ad"); 
   });
 }
 
-function blockVideoPageAds() {
-  if (!globalPluginConfig.flagAD) return; 
-  const adSelectors = [
-    ".video-card-ad-small", 
-    ".slide-ad-exp", 
-    ".video-page-game-card-small", 
-    ".activity-m-v1", 
-    ".video-page-special-card-small", 
-    ".ad-floor-exp", 
-    ".btn-ad", 
-    ".video-page-operator-card-small", 
-    ".ad-report",
-    ".slide_ad",
-  ];
-
-  adSelectors.forEach((selector) => {
-    document.querySelectorAll(selector).forEach((adCard) => {
-      hideVideoCard(adCard, "ad"); 
-    });
-  });
+function blockVideoPageAds() {
+  resolveVideoPageAds();
 }
+
+markVideoPageAdsPending();
 
 
 let autoplayWatchTimer = null; 

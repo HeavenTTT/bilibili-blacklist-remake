@@ -30,6 +30,11 @@ let countBlockCM = 0; // 已屏蔽cm.bilibili.com软广计数
 // 避免与 B 站 header 渲染竞争。该 WeakSet 记录已加 filter 的卡片，判定完成后清除。
 const pendingFilterCards = new WeakSet();
 
+// “未处理”遮盖使用的 filter 参数（单一真源）。
+// 卡片走 JS 逐元素设置 style.filter；播放页广告走 ads.js 里的同参数 CSS 规则，
+// 两边视觉完全一致，调整时只需改这一处。
+const PENDING_FILTER_STYLE = "blur(8px) grayscale(0.5) opacity(0.4)";
+
 // 用于不同页面UP主名称选择器
 // 注意：把具体/作者专用的选择器排在前面，`.name` 这类宽泛选择器放最后作兜底，
 // 避免在视频播放页等结构里优先匹配到“游戏名/标签/评论者”等非 UP 名的 `.name`。
@@ -138,7 +143,7 @@ function applyPendingFilter(cardElement) {
   if (!real) return;
   if (pendingFilterCards.has(real)) return; // 已遮盖，避免重复
   pendingFilterCards.add(real);
-  real.style.filter = "blur(8px) grayscale(0.5) opacity(0.4)";
+  real.style.filter = PENDING_FILTER_STYLE;
 }
 
 /**
@@ -237,8 +242,17 @@ function hideVideoCard(cardElement, type = "none") {
 function setBlockReasonOnCard(cardElement, type) {
   const reasonText = BLOCK_REASON_MAP[type];
   if (!reasonText) return;
-  // 广告等卡片未经过 scanAndBlockVideoCards 流程，可能不存在容器，需确保创建
-  const container = ensureBlockContainerOnCard(cardElement);
+  // 广告等卡片未经过 scanAndBlockVideoCards 流程，可能不存在容器，需确保创建。
+  // 播放页广告位的 DOM 结构与视频卡片完全不同（没有 .card-box，且常依赖自身定位/浮动布局），
+  // 走 ads.js 里独立的 ensureAdBlockContainer()，避免 getBlockContainerHost 的卡片专用分支。
+  const isVideoPageAd =
+    type === "ad" &&
+    isCurrentPageVideo() &&
+    typeof ensureAdBlockContainer === "function";
+  const container = isVideoPageAd
+    ? ensureAdBlockContainer(cardElement)
+    : ensureBlockContainerOnCard(cardElement);
+  if (!container) return;
   let reasonElement = container.querySelector(
     ".bilibili-blacklist-block-reason"
   );

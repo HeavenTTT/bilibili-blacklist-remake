@@ -124,6 +124,9 @@ function initializeVideoPage() {
 
   // 1) 进入页面：把当前已渲染的推荐卡片都标为“未处理”（filter 遮盖，不插 DOM 元素）
   markAllVideoCardsPending();
+  // 广告同样先覆盖：加 pending class，由 CSS 统一罩住广告位。
+  // （ads.js 求值期已调用过一次，这里再调一次是幂等的，用于覆盖配置在此期间被改动的情况）
+  markVideoPageAdsPending();
 
   // 2) 等 header 完全正常（.right-entry 渲染完成）后再启动完整处理
   
@@ -145,12 +148,23 @@ function initializeVideoPage() {
  */
 function startVideoPageProcessing(flag) {
   initializeObserver("right-container"); // 观察右侧推荐区域（等容器挂载，避免观察整页）
-  // 首次主动扫描 + 广告屏蔽：header 已稳定，此时对卡片做 DOM 操作不会再顶掉 header。
+  // 首次主动扫描 + 广告判定：header 已稳定，此时对卡片/广告做 DOM 操作不会再顶掉 header。
+  // 广告与卡片在同一批提交：判定完成后 resolveVideoPageAds() 内部会解除预覆盖。
   scanAndBlockVideoCards();
-  blockVideoPageAds();
+  resolveVideoPageAds();
+  // 记录当前 BV 作为“切视频”检测基准，并安装即时监听
+  lastSeenVideoBv = getVideoSwitchKey();
+  installVideoSwitchWatcher();
   // 页面内切集后右侧推荐会重建，观察器可能绑定到已替换节点；定时补扫兜底。
   setInterval(() => {
     scanAndBlockVideoCards();
+    // 观察根节点被整体替换时重连，否则此后新卡片/新广告都不会再触发观察器
+    ensureObserverAttached();
+    // 刚检测到切视频时只做预覆盖，判定交给观察器的新元素触发（或 1.5s 兜底），
+    // 避免在新广告渲染出来之前就把预覆盖解除掉。
+    if (!watchVideoSwitch()) {
+      resolveVideoPageAds(); // 低频兜底：观察器万一失效也不至于漏广告
+    }
   }, 2500);
   // 自动连播遇到被屏蔽视频时的处理
   initAutoplaySkip();
@@ -161,6 +175,80 @@ function startVideoPageProcessing(flag) {
     }
   }, 2500);
   console.log("[🫥BlackList] 视频播放页屏蔽功能已启动（header 已正常）。🍇");
+}
+
+// 上一次检测到的播放页 BV，用于识别页面内切换视频
+let lastSeenVideoBv = "";
+let videoSwitchWatcherInstalled = false;
+
+/**
+ * 取用于“切视频”比对的 BV。
+ *
+ * 刻意优先用 URL 而不是 autoplay.js 的 getCurrentBv()（它优先读播放器）：
+ * 页面内切视频先改 URL，播放器要晚一些才更新到新 BV。用 URL 才能在 pushState
+ * 包装里立刻感知到切换，从而在新广告插入之前就把预覆盖加回去。
+ * @returns {string}
+ */
+function getVideoSwitchKey() {
+  if (typeof getBvFromUrl === "function") {
+    const bvFromUrl = getBvFromUrl();
+    if (bvFromUrl) return bvFromUrl;
+  }
+  if (typeof getCurrentBv === "function") {
+    return getCurrentBv() || "";
+  }
+  return "";
+}
+
+/**
+ * 检测页面内切换视频（BV 变化）。变化时让广告重新进入“覆盖 → 判定”小周期。
+ *
+ * 只负责广告：卡片侧已有 2.5s 补扫 + 观察器增量处理，行为保持不变。
+ * @returns {boolean} 本次调用是否刚检测到切换。
+ */
+function watchVideoSwitch() {
+  if (!isCurrentPageVideo()) return false;
+  const bv = getVideoSwitchKey();
+  if (!bv) return false;
+  if (!lastSeenVideoBv) {
+    lastSeenVideoBv = bv;
+    return false;
+  }
+  if (bv === lastSeenVideoBv) return false;
+  lastSeenVideoBv = bv;
+  console.log("[🫥BlackList] 检测到页面内切换视频，广告重新覆盖并等待新元素:", bv);
+  onVideoSwitchedAds();
+  return true;
+}
+
+/**
+ * 安装“切视频”的即时监听：popstate + history.pushState/replaceState 包装。
+ *
+ * B 站页面内切视频走的是 pushState，不会触发 popstate，因此需要包装；
+ * 包装只是在调用原方法之后追加一次检测，不改变其行为。失败时不影响功能，
+ * 仍有 2.5s 定时兜底能检测到 BV 变化（只是覆盖时机会晚一些）。
+ */
+function installVideoSwitchWatcher() {
+  if (videoSwitchWatcherInstalled) return;
+  videoSwitchWatcherInstalled = true;
+  window.addEventListener("popstate", watchVideoSwitch);
+  try {
+    ["pushState", "replaceState"].forEach((method) => {
+      const original = history[method];
+      if (typeof original !== "function") return;
+      history[method] = function () {
+        const result = original.apply(this, arguments);
+        try {
+          watchVideoSwitch();
+        } catch (e) {
+          console.error("[🫥BlackList] 切视频检测出错:", e);
+        }
+        return result;
+      };
+    });
+  } catch (e) {
+    console.warn("[🫥BlackList] 无法包装 history 方法，改由定时兜底检测切视频:", e);
+  }
 }
 
 
