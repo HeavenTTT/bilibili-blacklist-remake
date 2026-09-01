@@ -34,18 +34,21 @@ let regexMatchBlacklist = GM_getValue("regexBlacklist", [
   "吃鸡",
 ]);
 let tagNameBlacklist = GM_getValue("tNameBlacklist", []);
+let videoTagBlacklist = GM_getValue("videoTagBlacklist", []);
 
 
 const defaultGlobalPluginConfig = {
   flagInfo: true,
   flagAD: true,
   flagTName: true,
+  flagVideoTag: true,
   flagAlwaysFetchTName: true,
   flagCM: true,
   blockDisplayMode: "kirby",
   displayModeInfo: "inherit",
   displayModeAD: "inherit",
   displayModeTName: "inherit",
+  displayModeVideoTag: "inherit",
   displayModeCM: "inherit",
   displayModeVertical: "inherit",
   flagHeaderButton: true,
@@ -116,6 +119,7 @@ const PER_TYPE_DISPLAY_KEYS = [
   "displayModeInfo",
   "displayModeAD",
   "displayModeTName",
+  "displayModeVideoTag",
   "displayModeCM",
   "displayModeVertical",
 ];
@@ -129,6 +133,7 @@ function saveBlacklistsToStorage() {
   GM_setValue("exactBlacklist", exactMatchBlacklist);
   GM_setValue("regexBlacklist", regexMatchBlacklist);
   GM_setValue("tNameBlacklist", tagNameBlacklist);
+  GM_setValue("videoTagBlacklist", videoTagBlacklist);
 }
 
 function saveGlobalConfigToStorage() {
@@ -274,6 +279,7 @@ let managerPanel;
 let exactMatchListElement;
 let regexMatchListElement;
 let tagNameListElement;
+let videoTagListElement;
 let configListElement;
 let blockCountTitleElement;
 let blockCountDisplayElement = null;
@@ -289,6 +295,7 @@ let isVideoCardQueueProcessing = false;
 let countBlockInfo = 0;
 let countBlockAD = 0;
 let countBlockTName = 0;
+let countBlockVideoTag = 0;
 let countBlockVertical = 0;
 let countBlockCM = 0;
 
@@ -318,6 +325,7 @@ const BLOCK_REASON_MAP = {
   info: "标题/UP主名",
   ad: "广告",
   tname: "分类标签",
+  videoTag: "视频标签",
   cm: "软广",
   vertical: "竖屏视频",
 };
@@ -396,6 +404,7 @@ function getEffectiveDisplayMode(type) {
     info: globalPluginConfig.displayModeInfo,
     ad: globalPluginConfig.displayModeAD,
     tname: globalPluginConfig.displayModeTName,
+    videoTag: globalPluginConfig.displayModeVideoTag,
     cm: globalPluginConfig.displayModeCM,
     vertical: globalPluginConfig.displayModeVertical,
   };
@@ -431,6 +440,9 @@ function hideVideoCard(cardElement, type = "none", reasonValue = null) {
   }
   if (type === "tname") {
     countBlockTName++;
+  }
+  if (type === "videoTag") {
+    countBlockVideoTag++;
   }
   if (type === "cm") {
     countBlockCM++;
@@ -471,6 +483,12 @@ function buildBlockReasonText(type, reasonValue) {
   if (type === "tname") {
     return "屏蔽原因: 分类标签";
   }
+  if (type === "videoTag" && reasonValue) {
+    return `屏蔽原因: 视频标签: ${reasonValue}`;
+  }
+  if (type === "videoTag") {
+    return "屏蔽原因: 视频标签";
+  }
   return `屏蔽原因: ${BLOCK_REASON_MAP[type] || type}`;
 }
 
@@ -479,6 +497,9 @@ function isReasonCancellable(type, reasonValue) {
     return !!reasonValue && reasonValue !== REGEX_BLOCK_VALUE;
   }
   if (type === "tname") {
+    return !!reasonValue;
+  }
+  if (type === "videoTag") {
     return !!reasonValue;
   }
   return false;
@@ -500,6 +521,12 @@ function cancelCardBlockReason(card, type, value) {
     tagNameBlacklist.splice(idx, 1);
     saveBlacklistsToStorage();
     refreshTagNameList();
+  } else if (type === "videoTag") {
+    const idx = videoTagBlacklist.indexOf(value);
+    if (idx === -1) return;
+    videoTagBlacklist.splice(idx, 1);
+    saveBlacklistsToStorage();
+    refreshVideoTagList();
   } else {
     return;
   }
@@ -582,6 +609,7 @@ function decrementBlockCounter(type) {
   if (type === "info" && countBlockInfo > 0) countBlockInfo--;
   else if (type === "ad" && countBlockAD > 0) countBlockAD--;
   else if (type === "tname" && countBlockTName > 0) countBlockTName--;
+  else if (type === "videoTag" && countBlockVideoTag > 0) countBlockVideoTag--;
   else if (type === "cm" && countBlockCM > 0) countBlockCM--;
   else if (type === "vertical" && countBlockVertical > 0) countBlockVertical--;
 }
@@ -881,6 +909,36 @@ function removeFromTagNameBlacklist(tagName) {
   }
 }
 
+function addToVideoTagBlacklist(tagName, cardElement = null) {
+  try {
+    const normalizedTagName = String(tagName || "").trim();
+    if (!normalizedTagName || videoTagBlacklist.includes(normalizedTagName)) {
+      return;
+    }
+    videoTagBlacklist.push(normalizedTagName);
+    saveBlacklistsToStorage();
+    refreshAllPanelTabs();
+    if (cardElement) {
+      hideVideoCard(cardElement, "videoTag", normalizedTagName);
+    }
+    hideAllCardsByVideoTag(normalizedTagName);
+  } catch (e) {
+    console.error("[🫥BlackList] 添加视频标签黑名单出错:", e);
+  }
+}
+
+function removeFromVideoTagBlacklist(tagName) {
+  try {
+    const index = videoTagBlacklist.indexOf(tagName);
+    if (index === -1) return;
+    videoTagBlacklist.splice(index, 1);
+    saveBlacklistsToStorage();
+    refreshVideoTagList();
+  } catch (e) {
+    console.error("[🫥BlackList] 移除视频标签黑名单出错:", e);
+  }
+}
+
 function hideAllCardsByUpName(upName) {
   const videoCards = queryAllVideoCards();
   if (!videoCards) return;
@@ -898,6 +956,17 @@ function hideAllCardsByTagName(tagName) {
   videoCards.forEach(card => {
     if (isCardBlacklistedByTagName(card)) {
       hideVideoCard(card, "tname");
+    }
+  });
+}
+
+function hideAllCardsByVideoTag(tagName) {
+  const videoCards = queryAllVideoCards();
+  if (!videoCards) return;
+  videoCards.forEach((card) => {
+    const matchedTag = getBlacklistedVideoTag(card);
+    if (matchedTag === tagName) {
+      hideVideoCard(card, "videoTag", matchedTag);
     }
   });
 }
@@ -976,6 +1045,82 @@ async function getBilibiliVideoApiData(bvid) {
     if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 }
+
+const bvTagApiDataCache = new Map();
+
+function hasFreshBvTagApiCache(bvid) {
+  if (!bvid) return false;
+  const cached = bvTagApiDataCache.get(bvid);
+  return !!(cached && Date.now() < cached.expire);
+}
+
+async function getBilibiliVideoTagApiData(bvid) {
+  if (!bvid || bvid.length >= 24) {
+    return null;
+  }
+  const cached = bvTagApiDataCache.get(bvid);
+  if (cached && Date.now() < cached.expire) {
+    return cached.data;
+  }
+  const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${encodeURIComponent(bvid)}`;
+  const controller =
+    typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutTimer = controller
+    ? setTimeout(() => controller.abort(), BV_API_TIMEOUT_MS)
+    : null;
+  try {
+    const response = await fetch(
+      url,
+      controller ? { signal: controller.signal } : undefined
+    );
+    const json = await response.json();
+    if (json.code === 0 && Array.isArray(json.data)) {
+      const data = { videoTags: json.data };
+      bvTagApiDataCache.set(bvid, {
+        data,
+        expire: Date.now() + BV_API_CACHE_TTL,
+      });
+      return data;
+    }
+    return null;
+  } catch (error) {
+    console.error("[🫥BlackList] 视频标签 API 请求失败:", error);
+    return null;
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+  }
+}
+
+function normalizeVideoTagName(tag) {
+  if (typeof tag === "string") {
+    const name = tag.trim();
+    return name && !name.startsWith("#") ? name : null;
+  }
+  if (!tag || typeof tag !== "object") return null;
+  const tagType = String(tag.tag_type || "").toLowerCase();
+  if (tagType === "bgm" || tagType === "music" || tagType === "topic") {
+    return null;
+  }
+  if (tag.music_id) return null;
+  const name = String(tag.tag_name || "").trim();
+  if (!name || name.startsWith("#")) return null;
+  return name;
+}
+
+function getEligibleVideoTags(data) {
+  if (!data || !Array.isArray(data.videoTags)) return [];
+  const result = [];
+  const seen = new Set();
+  data.videoTags.forEach((tag) => {
+    const name = normalizeVideoTagName(tag);
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+  });
+  return result;
+}
+
 function getBlacklistedTagName(cardElement) {
   const tnameGroup = cardElement.querySelector(
     ".bilibili-blacklist-tname-group"
@@ -1006,6 +1151,23 @@ function isCardBlacklistedByTagName(cardElement) {
   return !!getBlacklistedTagName(cardElement);
 }
 
+function getBlacklistedVideoTag(cardElement) {
+  const videoTagElements = cardElement.querySelectorAll(
+    ".bilibili-blacklist-video-tag"
+  );
+  for (const videoTagElement of videoTagElements) {
+    const tagName = (videoTagElement.textContent || "").trim();
+    if (tagName && videoTagBlacklist.includes(tagName)) {
+      return tagName;
+    }
+  }
+  return null;
+}
+
+function isCardBlacklistedByVideoTag(cardElement) {
+  return !!getBlacklistedVideoTag(cardElement);
+}
+
 function addTNameButtonToGroup(group, tagName, card) {
   if (tagName == null) return false;
   const name = String(tagName).trim();
@@ -1021,24 +1183,45 @@ function addTNameButtonToGroup(group, tagName, card) {
 }
 
 async function attachTNameGroupToCard(card, bvId) {
-  const usedNetwork = !hasFreshBvApiCache(bvId);
-  const data = await getBilibiliVideoApiData(bvId);
+  const needViewApi =
+    globalPluginConfig.flagTName || globalPluginConfig.flagVertical;
+  const needVideoTagApi = globalPluginConfig.flagVideoTag;
+  const usedNetwork =
+    (needViewApi && !hasFreshBvApiCache(bvId)) ||
+    (needVideoTagApi && !hasFreshBvTagApiCache(bvId));
+  const [viewData, videoTagData] = await Promise.all([
+    needViewApi ? getBilibiliVideoApiData(bvId) : Promise.resolve(null),
+    needVideoTagApi
+      ? getBilibiliVideoTagApiData(bvId)
+      : Promise.resolve(null),
+  ]);
+  const data =
+    viewData || videoTagData
+      ? { ...(viewData || {}), ...(videoTagData || {}) }
+      : null;
   let tnameResolved = false;
 
   if (data) {
     if (card.querySelector(".bilibili-blacklist-tname-group")) {
-      tnameResolved = true;
+      tnameResolved =
+        !globalPluginConfig.flagTName ||
+        !!card.querySelector(
+          ".bilibili-blacklist-tname-group .bilibili-blacklist-tname"
+        );
     } else {
       const container = ensureBlockContainerOnCard(card);
       if (container) {
         const tnameGroup = document.createElement("div");
         tnameGroup.className = "bilibili-blacklist-tname-group";
         let hasTname = false;
+        let hasVideoTag = false;
 
-        hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
-        hasTname =
-          addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
-        if (data.tid_v2) {
+        if (globalPluginConfig.flagTName) {
+          hasTname = addTNameButtonToGroup(tnameGroup, data.tname, card) || hasTname;
+          hasTname =
+            addTNameButtonToGroup(tnameGroup, data.tname_v2, card) || hasTname;
+        }
+        if (globalPluginConfig.flagTName && data.tid_v2) {
           const obj = getTagNameById(data.tid_v2);
           if (obj) {
             hasTname =
@@ -1047,9 +1230,15 @@ async function attachTNameGroupToCard(card, bvId) {
               addTNameButtonToGroup(tnameGroup, obj.name_v2, card) || hasTname;
           }
         }
-        if (hasTname) {
+        if (globalPluginConfig.flagVideoTag) {
+          getEligibleVideoTags(data).forEach((tagName) => {
+            tnameGroup.appendChild(createVideoTagBlockButton(tagName, card));
+            hasVideoTag = true;
+          });
+        }
+        if (hasTname || hasVideoTag) {
           container.appendChild(tnameGroup);
-          tnameResolved = true;
+          tnameResolved = hasTname;
         }
       }
     }
@@ -1122,7 +1311,9 @@ async function processVideoCardQueue() {
 
     if (
       !shouldHide &&
-      (globalPluginConfig.flagTName || globalPluginConfig.flagVertical) &&
+      (globalPluginConfig.flagTName ||
+        globalPluginConfig.flagVideoTag ||
+        globalPluginConfig.flagVertical) &&
       bvId
     ) {
       if (hasTNameGroup) {
@@ -1130,11 +1321,21 @@ async function processVideoCardQueue() {
         usedNetwork = result.usedNetwork;
         const data = result.data;
         if (data) {
-          const matchedTag = getBlacklistedTagName(card);
+          const matchedTag = globalPluginConfig.flagTName
+            ? getBlacklistedTagName(card)
+            : null;
           if (matchedTag) {
             shouldHide = true;
             blockType = "tname";
             blockReasonValue = matchedTag;
+          }
+          const matchedVideoTag = globalPluginConfig.flagVideoTag
+            ? getBlacklistedVideoTag(card)
+            : null;
+          if (!shouldHide && matchedVideoTag) {
+            shouldHide = true;
+            blockType = "videoTag";
+            blockReasonValue = matchedVideoTag;
           }
           if (
             !shouldHide &&
@@ -1156,11 +1357,21 @@ async function processVideoCardQueue() {
         const data = result.data;
 
         if (data) {
-          const matchedTag = getBlacklistedTagName(card);
+          const matchedTag = globalPluginConfig.flagTName
+            ? getBlacklistedTagName(card)
+            : null;
           if (matchedTag) {
             shouldHide = true;
             blockType = "tname";
             blockReasonValue = matchedTag;
+          }
+          const matchedVideoTag = globalPluginConfig.flagVideoTag
+            ? getBlacklistedVideoTag(card)
+            : null;
+          if (!shouldHide && matchedVideoTag) {
+            shouldHide = true;
+            blockType = "videoTag";
+            blockReasonValue = matchedVideoTag;
           }
           if (
             !shouldHide &&
@@ -1204,7 +1415,7 @@ async function processVideoCardQueue() {
     } else if (
       shouldHide &&
       globalPluginConfig.flagAlwaysFetchTName &&
-      globalPluginConfig.flagTName &&
+      (globalPluginConfig.flagTName || globalPluginConfig.flagVideoTag) &&
       bvId &&
       !hasTNameGroup
     ) {
@@ -1276,6 +1487,15 @@ function createTNameBlockButton(tagName, cardElement) {
   return button;
 }
 
+function createVideoTagBlockButton(tagName, cardElement) {
+  const button = document.createElement("span");
+  button.className = "bilibili-blacklist-video-tag";
+  button.textContent = tagName;
+  button.title = `屏蔽视频标签: ${tagName}`;
+  button.dataset.videoTag = tagName || "";
+  return button;
+}
+
 const CARD_ROOT_SELECTORS_FOR_BUTTON = [
   ".bili-video-card",
   ".video-page-card-small",
@@ -1322,6 +1542,16 @@ function setupCardButtonDelegation() {
         const blockValue = reasonBtn.dataset.blockValue || "";
         if (!blockType || !blockValue) return;
         cancelCardBlockReason(findCardForButton(reasonBtn), blockType, blockValue);
+        return;
+      }
+
+      const videoTagBtn = t.closest(".bilibili-blacklist-video-tag");
+      if (videoTagBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        const tagName = videoTagBtn.dataset.videoTag || "";
+        if (!tagName) return;
+        addToVideoTagBlacklist(tagName, findCardForButton(videoTagBtn));
         return;
       }
 
@@ -1406,7 +1636,7 @@ function refreshBlockCountDisplay() {
       blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
     }
     if (blockCountTitleElement) {
-      blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVertical})`;
+      blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVideoTag} + ${countBlockVertical})`;
     }
   }
 }
@@ -1532,6 +1762,39 @@ function refreshTagNameList() {
     empty.className = "bilibili-blacklist-empty";
     empty.textContent = "暂无标签屏蔽规则";
     tagNameListElement.appendChild(empty);
+  }
+}
+
+function refreshVideoTagList() {
+  if (!videoTagListElement) {
+    if (!isBlacklistPanelCreated()) {
+      return;
+    }
+    videoTagListElement = document.querySelector(
+      "#bilibili-blacklist-video-tag-list"
+    );
+    if (!videoTagListElement) {
+      console.warn("[🫥BlackList] videoTagListElement 未定义");
+      return;
+    }
+  }
+  videoTagListElement.innerHTML = "";
+
+  videoTagBlacklist.forEach((tagName) => {
+    const item = createBlacklistListItem(tagName, () => {
+      removeFromVideoTagBlacklist(tagName);
+    });
+    videoTagListElement.appendChild(item);
+  });
+  Array.from(videoTagListElement.children)
+    .reverse()
+    .forEach((item) => videoTagListElement.appendChild(item));
+
+  if (videoTagBlacklist.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bilibili-blacklist-empty";
+    empty.textContent = "暂无视频标签屏蔽规则";
+    videoTagListElement.appendChild(empty);
   }
 }
 
@@ -1704,6 +1967,13 @@ function refreshConfigSettings() {
   );
   configListElement.appendChild(
     createSettingToggleButton(
+      "屏蔽视频标签",
+      "flagVideoTag",
+      "通过 /x/tag/archive/tags 获取视频标签，并自动排除音乐和话题标签"
+    )
+  );
+  configListElement.appendChild(
+    createSettingToggleButton(
       "始终获取分类标签",
       "flagAlwaysFetchTName",
       "开启(默认)：即使卡片已被UP主名/正则/软广命中，也会在低优先级补一次请求，保证分类标签按钮始终可见。关闭：已命中的卡片不再请求API，队列处理明显更快（搜索页翻页尤其明显），代价是这些卡片上看不到分类标签。"
@@ -1812,6 +2082,14 @@ function refreshConfigSettings() {
   );
   configListElement.appendChild(
     createSettingSelect(
+      "视频标签行为:",
+      "displayModeVideoTag",
+      "视频标签命中的卡片显示方式，选择继承全局则跟随上方全局模式。",
+      DISPLAY_MODE_INHERIT_OPTIONS
+    )
+  );
+  configListElement.appendChild(
+    createSettingSelect(
       "竖屏行为:",
       "displayModeVertical",
       "竖屏命中的卡片显示方式，选择继承全局则跟随上方全局模式。",
@@ -1892,6 +2170,7 @@ function refreshAllPanelTabs() {
   refreshExactMatchList();
   refreshRegexMatchList();
   refreshTagNameList();
+  refreshVideoTagList();
   refreshConfigSettings();
 }
 
@@ -1930,6 +2209,10 @@ function createBlacklistPanel() {
   tnameContent.className = "bilibili-blacklist-panel-content";
   tnameContent.style.display = "none";
 
+  const videoTagContent = document.createElement("div");
+  videoTagContent.className = "bilibili-blacklist-panel-content";
+  videoTagContent.style.display = "none";
+
   const configContent = document.createElement("div");
   configContent.className = "bilibili-blacklist-panel-content";
   configContent.style.display = "none";
@@ -1938,6 +2221,7 @@ function createBlacklistPanel() {
     { name: "精确匹配(Up名字)", content: exactContent },
     { name: "正则匹配(Up/标题)", content: regexContent },
     { name: "屏蔽分类", content: tnameContent },
+    { name: "屏蔽标签", content: videoTagContent },
     { name: "插件配置", content: configContent },
   ];
   tabs.forEach((tabData) => {
@@ -2039,6 +2323,27 @@ function createBlacklistPanel() {
     "font-size:12px;color:#999;margin:0 0 12px;line-height:1.5;";
   regexContent.appendChild(regexHint);
 
+  const addVideoTagContainer = document.createElement("div");
+  addVideoTagContainer.className = "bilibili-blacklist-add-row";
+
+  const videoTagInput = document.createElement("input");
+  videoTagInput.type = "text";
+  videoTagInput.placeholder = "输入要屏蔽的视频标签（不含音乐/话题）";
+
+  const addVideoTagBtn = document.createElement("button");
+  addVideoTagBtn.className = "bilibili-blacklist-primary-btn";
+  addVideoTagBtn.textContent = "添加";
+  addVideoTagBtn.addEventListener("click", () => {
+    const tagName = videoTagInput.value.trim();
+    if (tagName) {
+      addToVideoTagBlacklist(tagName);
+      videoTagInput.value = "";
+    }
+  });
+  addVideoTagContainer.appendChild(videoTagInput);
+  addVideoTagContainer.appendChild(addVideoTagBtn);
+  videoTagContent.appendChild(addVideoTagContainer);
+
   exactMatchListElement = document.createElement("ul");
   exactMatchListElement.id = "bilibili-blacklist-exact-list";
 
@@ -2048,6 +2353,9 @@ function createBlacklistPanel() {
   tagNameListElement = document.createElement("ul");
   tagNameListElement.id = "bilibili-blacklist-tname-list";
 
+  videoTagListElement = document.createElement("ul");
+  videoTagListElement.id = "bilibili-blacklist-video-tag-list";
+
   configListElement = document.createElement("ul");
   configListElement.id = "bilibili-blacklist-config-list";
 
@@ -2055,11 +2363,13 @@ function createBlacklistPanel() {
   exactContent.appendChild(exactMatchListElement);
   regexContent.appendChild(regexMatchListElement);
   tnameContent.appendChild(tagNameListElement);
+  videoTagContent.appendChild(videoTagListElement);
   configContent.appendChild(configListElement);
 
   contentContainer.appendChild(exactContent);
   contentContainer.appendChild(regexContent);
   contentContainer.appendChild(tnameContent);
+  contentContainer.appendChild(videoTagContent);
   contentContainer.appendChild(configContent);
 
   managerPanel.appendChild(tabContainer);
@@ -2113,7 +2423,8 @@ GM_addStyle(`
   /* btn / reason / tname 共用基础外观 */
   .bilibili-blacklist-block-btn,
   .bilibili-blacklist-block-reason,
-  .bilibili-blacklist-tname {
+  .bilibili-blacklist-tname,
+  .bilibili-blacklist-video-tag {
     display: flex;
     justify-content: center;
     align-items: center;
@@ -2169,6 +2480,14 @@ GM_addStyle(`
 
   .bilibili-blacklist-tname {
     background-color: #fb7299dd;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  .bilibili-blacklist-video-tag {
+    background-color: #409effdd;
     text-overflow: ellipsis;
     overflow: hidden;
     pointer-events: auto;

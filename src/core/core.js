@@ -8,6 +8,7 @@ let managerPanel;
 let exactMatchListElement;
 let regexMatchListElement;
 let tagNameListElement;
+let videoTagListElement;
 let configListElement;
 let blockCountTitleElement;
 let blockCountDisplayElement = null;
@@ -27,6 +28,7 @@ let isVideoCardQueueProcessing = false; // 是否正在处理队列
 let countBlockInfo = 0; // 已屏蔽视频计数
 let countBlockAD = 0; // 已屏蔽广告计数
 let countBlockTName = 0; // 已屏蔽标签名计数
+let countBlockVideoTag = 0; // 已屏蔽视频标签计数
 let countBlockVertical = 0; // 已屏蔽竖屏计数
 let countBlockCM = 0; // 已屏蔽cm.bilibili.com软广计数
 
@@ -68,6 +70,7 @@ const BLOCK_REASON_MAP = {
   info: "标题/UP主名",
   ad: "广告",
   tname: "分类标签",
+  videoTag: "视频标签",
   cm: "软广",
   vertical: "竖屏视频",
 };
@@ -194,6 +197,7 @@ function getEffectiveDisplayMode(type) {
     info: globalPluginConfig.displayModeInfo,
     ad: globalPluginConfig.displayModeAD,
     tname: globalPluginConfig.displayModeTName,
+    videoTag: globalPluginConfig.displayModeVideoTag,
     cm: globalPluginConfig.displayModeCM,
     vertical: globalPluginConfig.displayModeVertical,
   };
@@ -231,6 +235,9 @@ function hideVideoCard(cardElement, type = "none", reasonValue = null) {
   if (type === "tname") {
     countBlockTName++;
   }
+  if (type === "videoTag") {
+    countBlockVideoTag++;
+  }
   if (type === "cm") {
     countBlockCM++;
   }
@@ -260,6 +267,7 @@ function hideVideoCard(cardElement, type = "none", reasonValue = null) {
  * - info 精确匹配：显示具体 UP 名；
  * - info 正则匹配：无法定位具体规则，写明原因（不支持取消）；
  * - tname：显示具体标签名；
+ * - videoTag：显示具体视频标签名；
  * - 其余（cm/竖屏/广告）：显示类型文案（不支持取消）。
  * @param {string} type - 屏蔽类型。
  * @param {string|null} reasonValue - 具体内容（UP 名 / 标签名 / REGEX_BLOCK_VALUE）。
@@ -281,12 +289,18 @@ function buildBlockReasonText(type, reasonValue) {
   if (type === "tname") {
     return "屏蔽原因: 分类标签";
   }
+  if (type === "videoTag" && reasonValue) {
+    return `屏蔽原因: 视频标签: ${reasonValue}`;
+  }
+  if (type === "videoTag") {
+    return "屏蔽原因: 视频标签";
+  }
   return `屏蔽原因: ${BLOCK_REASON_MAP[type] || type}`;
 }
 
 /**
  * 该原因是否支持“点击取消”（= 存在可删除的黑名单规则）。
- * 只支持 info 精确匹配与 tname：点取消会把对应规则从黑名单删除；
+ * 只支持 info 精确匹配、tname 与 videoTag：点取消会把对应规则从黑名单删除；
  * 正则无法定位具体规则，cm/竖屏/广告没有可删除的规则。
  * @param {string} type - 屏蔽类型。
  * @param {string|null} reasonValue - 具体内容。
@@ -299,11 +313,14 @@ function isReasonCancellable(type, reasonValue) {
   if (type === "tname") {
     return !!reasonValue;
   }
+  if (type === "videoTag") {
+    return !!reasonValue;
+  }
   return false;
 }
 
 /**
- * 取消某张卡片当前显示的屏蔽原因（仅支持 info 精确匹配 / tname）：
+ * 取消某张卡片当前显示的屏蔽原因（仅支持 info 精确匹配 / tname / videoTag）：
  *   1. 把对应规则从黑名单中删除（精确 UP 名从 exactMatchBlacklist、标签从
  *      tagNameBlacklist 移除）并持久化 —— 这就是“取消屏蔽”本身；
  *   2. 只刷新这一张卡片：恢复显示、重新入队做完整判定 —— 若还有其它屏蔽原因
@@ -329,6 +346,12 @@ function cancelCardBlockReason(card, type, value) {
     tagNameBlacklist.splice(idx, 1);
     saveBlacklistsToStorage();
     refreshTagNameList();
+  } else if (type === "videoTag") {
+    const idx = videoTagBlacklist.indexOf(value);
+    if (idx === -1) return;
+    videoTagBlacklist.splice(idx, 1);
+    saveBlacklistsToStorage();
+    refreshVideoTagList();
   } else {
     return; // 正则/cm/竖屏/广告 不支持
   }
@@ -357,7 +380,7 @@ function cancelCardBlockReason(card, type, value) {
 
 /**
  * 在卡片的屏蔽按钮容器中设置屏蔽原因。
- * 支持“一键取消”的原因（info 精确 / tname）渲染为可点击的取消按钮，
+ * 支持“一键取消”的原因（info 精确 / tname / videoTag）渲染为可点击的取消按钮，
  * 并展示具体屏蔽内容（UP 名 / 标签名）；其余类型仅展示原因文案。
  * @param {HTMLElement} cardElement - 视频卡片元素。
  * @param {string} type - 屏蔽类型。
@@ -434,6 +457,7 @@ function decrementBlockCounter(type) {
   if (type === "info" && countBlockInfo > 0) countBlockInfo--;
   else if (type === "ad" && countBlockAD > 0) countBlockAD--;
   else if (type === "tname" && countBlockTName > 0) countBlockTName--;
+  else if (type === "videoTag" && countBlockVideoTag > 0) countBlockVideoTag--;
   else if (type === "cm" && countBlockCM > 0) countBlockCM--;
   else if (type === "vertical" && countBlockVertical > 0) countBlockVertical--;
 }
@@ -842,6 +866,45 @@ function removeFromTagNameBlacklist(tagName) {
 }
 
 /**
+ * 将视频标签添加到黑名单并刷新。
+ * @param {string} tagName - 要添加的视频标签名。
+ * @param {HTMLElement} [cardElement=null] - 添加后要隐藏的视频卡片元素。
+ */
+function addToVideoTagBlacklist(tagName, cardElement = null) {
+  try {
+    const normalizedTagName = String(tagName || "").trim();
+    if (!normalizedTagName || videoTagBlacklist.includes(normalizedTagName)) {
+      return;
+    }
+    videoTagBlacklist.push(normalizedTagName);
+    saveBlacklistsToStorage();
+    refreshAllPanelTabs();
+    if (cardElement) {
+      hideVideoCard(cardElement, "videoTag", normalizedTagName);
+    }
+    hideAllCardsByVideoTag(normalizedTagName);
+  } catch (e) {
+    console.error("[🫥BlackList] 添加视频标签黑名单出错:", e);
+  }
+}
+
+/**
+ * 从视频标签黑名单中移除标签名。
+ * @param {string} tagName - 要移除的视频标签名。
+ */
+function removeFromVideoTagBlacklist(tagName) {
+  try {
+    const index = videoTagBlacklist.indexOf(tagName);
+    if (index === -1) return;
+    videoTagBlacklist.splice(index, 1);
+    saveBlacklistsToStorage();
+    refreshVideoTagList();
+  } catch (e) {
+    console.error("[🫥BlackList] 移除视频标签黑名单出错:", e);
+  }
+}
+
+/**
  * 隐藏所有匹配指定UP主名称的视频卡片。
  * @param {string} upName - 要匹配的UP主名称。
  */
@@ -866,6 +929,21 @@ function hideAllCardsByTagName(tagName) {
   videoCards.forEach(card => {
     if (isCardBlacklistedByTagName(card)) {
       hideVideoCard(card, "tname");
+    }
+  });
+}
+
+/**
+ * 隐藏所有匹配指定视频标签的视频卡片。
+ * @param {string} tagName - 要匹配的视频标签名。
+ */
+function hideAllCardsByVideoTag(tagName) {
+  const videoCards = queryAllVideoCards();
+  if (!videoCards) return;
+  videoCards.forEach((card) => {
+    const matchedTag = getBlacklistedVideoTag(card);
+    if (matchedTag === tagName) {
+      hideVideoCard(card, "videoTag", matchedTag);
     }
   });
 }
