@@ -1096,6 +1096,14 @@ function getLinkBvId(link) {
 const bvApiDataCache = new Map();
 const BV_API_CACHE_TTL = 10 * 60 * 1000;
 const BV_API_TIMEOUT_MS = 5000;
+const BV_API_MIN_INTERVAL_MS = 50;
+let lastBvApiRequestAt = 0;
+async function bvApiThrottle() {
+  const now = Date.now();
+  const wait = lastBvApiRequestAt + BV_API_MIN_INTERVAL_MS - now;
+  if (wait > 0) await sleep(wait);
+  lastBvApiRequestAt = Date.now();
+}
 
 function hasFreshBvApiCache(bvid) {
   if (!bvid) return false;
@@ -1111,6 +1119,7 @@ async function getBilibiliVideoApiData(bvid) {
   if (cached && Date.now() < cached.expire) {
     return cached.data;
   }
+  await bvApiThrottle();
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
@@ -1155,6 +1164,7 @@ async function getBilibiliVideoTagApiData(bvid) {
   if (cached && Date.now() < cached.expire) {
     return cached.data;
   }
+  await bvApiThrottle();
   const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${encodeURIComponent(bvid)}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;

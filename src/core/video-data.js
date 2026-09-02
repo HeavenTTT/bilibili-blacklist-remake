@@ -59,6 +59,16 @@ const BV_API_CACHE_TTL = 10 * 60 * 1000;
 // 单次接口请求超时：没有超时的话，一个挂起的请求会把整条串行队列永久卡死，
 // 后面所有卡片都停在“未处理”状态（搜索页翻页后延迟十几秒的长尾来源之一）。
 const BV_API_TIMEOUT_MS = 5000;
+// 任意两次 B 站接口请求之间保持的最小间隔，防止连续/循环调用触发限流。
+// 命中缓存不经过这里（只有真正发网络请求才等待）。默认 50ms。
+const BV_API_MIN_INTERVAL_MS = 50;
+let lastBvApiRequestAt = 0;
+async function bvApiThrottle() {
+  const now = Date.now();
+  const wait = lastBvApiRequestAt + BV_API_MIN_INTERVAL_MS - now;
+  if (wait > 0) await sleep(wait);
+  lastBvApiRequestAt = Date.now();
+}
 
 /**
  * 判断某个 BV 是否已有未过期的接口缓存。
@@ -80,6 +90,7 @@ async function getBilibiliVideoApiData(bvid) {
   if (cached && Date.now() < cached.expire) {
     return cached.data;
   }
+  await bvApiThrottle(); // 连续调用防限流
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
@@ -132,6 +143,7 @@ async function getBilibiliVideoTagApiData(bvid) {
   if (cached && Date.now() < cached.expire) {
     return cached.data;
   }
+  await bvApiThrottle(); // 连续调用防限流
   const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${encodeURIComponent(bvid)}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
