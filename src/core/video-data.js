@@ -9,6 +9,8 @@ let tnameRetriedCards = new WeakSet();
 // 记录“视频标签接口第一次无返回、已被重排回队列重试”的卡片（弱引用）。
 // 重试仍失败时按“无法确定是否安全”处理为放行（不再屏蔽）。
 let videoTagRetriedCards = new WeakSet();
+// 页面是否可见/前台：切到后台（document.hidden）时暂停队列处理，切回后继续。
+let isPageCurrentlyActive = true;
 /**
  * 获取视频卡片的链接。
  * @param {HTMLElement} cardElement - 视频卡片元素。
@@ -492,6 +494,12 @@ async function processVideoCardQueue() {
   let localDecisionStreak = 0; // 连续“零网络判定”的卡片数，用于定期让出主线程
 
   while (videoCardProcessQueue.size > 0 || tnameDecorateQueue.size > 0) {
+    // 页面切到后台：暂停处理（每 1s 重查一次，恢复可见后继续）。
+    if (!isPageCurrentlyActive) {
+      await sleep(1000);
+      continue;
+    }
+
     // ===== 补标签队列：优先级最低，只有主队列空了才处理 =====
     if (videoCardProcessQueue.size === 0) {
       const decorateIterator = tnameDecorateQueue.values();

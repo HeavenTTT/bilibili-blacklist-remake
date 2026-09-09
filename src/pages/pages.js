@@ -196,8 +196,6 @@ function isCurrentPageVideo() {
  */
 function initializeVideoPage() {
   console.log("[🫥BlackList] 播放页已加载（未处理卡片先 filter 遮盖，等 header 正常后启动）。🍇");
-  const flag = globalPluginConfig.flagSkipBlockedAutoplay;
-  globalPluginConfig.flagSkipBlockedAutoplay = "off";
 
   // 1) 进入页面：把当前已渲染的推荐卡片都标为“未处理”（filter 遮盖，不插 DOM 元素）
   markAllVideoCardsPending();
@@ -211,7 +209,7 @@ function initializeVideoPage() {
     videoHeaderReady = true;
     addBlacklistManagerButton();        // 顶栏就绪后才写 header 元素（管理按钮）
     refreshBlockCountDisplay();
-    startVideoPageProcessing(flag);     // header 正常后才做卡片处理
+    startVideoPageProcessing();         // header 正常后才做卡片处理
   }), 5000);
 ;
 
@@ -220,9 +218,9 @@ function initializeVideoPage() {
 
 /**
  * 视频页在 header 完全正常后启动的完整处理：观察器 + 首次扫描 + 广告 + 连播 + 补扫。
- * @param {string} flag - 进入时的 flagSkipBlockedAutoplay 值（用于处理完恢复）
+ * 自动连播监听在此之后才初始化，因此启动阶段无需改动 flagSkipBlockedAutoplay 配置。
  */
-function startVideoPageProcessing(flag) {
+function startVideoPageProcessing() {
   initializeObserver("right-container"); // 观察右侧推荐区域（等容器挂载，避免观察整页）
   // 首次主动扫描 + 广告判定：header 已稳定，此时对卡片/广告做 DOM 操作不会再顶掉 header。
   // 广告与卡片在同一批提交：判定完成后 resolveVideoPageAds() 内部会解除预覆盖。
@@ -244,12 +242,6 @@ function startVideoPageProcessing(flag) {
   }, 2500);
   // 自动连播遇到被屏蔽视频时的处理
   initAutoplaySkip();
-  // 恢复自动连播配置：仅当用户没在面板里改过时才恢复，避免覆盖用户新设置
-  setTimeout(() => {
-    if (globalPluginConfig.flagSkipBlockedAutoplay === "off") {
-      globalPluginConfig.flagSkipBlockedAutoplay = flag;
-    }
-  }, 2500);
   console.log("[🫥BlackList] 视频播放页屏蔽功能已启动（header 已正常）。🍇");
 }
 

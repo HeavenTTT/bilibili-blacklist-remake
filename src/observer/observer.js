@@ -10,7 +10,11 @@
  *   - 触发后走全量 querySelectorAll（由 AD_DONE_ATTR 去重），即使广告被包在未知容器里
  *     没能在 addedNodes 里被直接匹配到，也能被处理到。
  */
-// (未启用) 页面可见性暂停处理已被移除
+// 页面切到后台（document.hidden）时暂停队列处理，切回后恢复。
+// isPageCurrentlyActive 由 video-data.js 声明；这里只负责随 visibilitychange 更新它。
+document.addEventListener("visibilitychange", () => {
+  isPageCurrentlyActive = !document.hidden;
+});
 
 // 增量观察：只处理“新插入”的卡片，不做全量重扫
 const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";

@@ -1065,6 +1065,7 @@ function hideAllCardsByVideoTag(tagName) {
 
 let tnameRetriedCards = new WeakSet();
 let videoTagRetriedCards = new WeakSet();
+let isPageCurrentlyActive = true;
 function getCardHrefLink(cardElement) {
   const hrefLink = cardElement.querySelector("a");
   if (hrefLink) {
@@ -1436,6 +1437,11 @@ async function processVideoCardQueue() {
   let localDecisionStreak = 0;
 
   while (videoCardProcessQueue.size > 0 || tnameDecorateQueue.size > 0) {
+    if (!isPageCurrentlyActive) {
+      await sleep(1000);
+      continue;
+    }
+
     if (videoCardProcessQueue.size === 0) {
       const decorateIterator = tnameDecorateQueue.values();
       const decorateCard = decorateIterator.next().value;
@@ -3348,6 +3354,9 @@ function removeKirbyOverlay(cardElement) {
   }
 }
 
+document.addEventListener("visibilitychange", () => {
+  isPageCurrentlyActive = !document.hidden;
+});
 
 const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
 let seenCards = new WeakSet();
@@ -3619,8 +3628,6 @@ function isCurrentPageVideo() {
 
 function initializeVideoPage() {
   console.log("[🫥BlackList] 播放页已加载（未处理卡片先 filter 遮盖，等 header 正常后启动）。🍇");
-  const flag = globalPluginConfig.flagSkipBlockedAutoplay;
-  globalPluginConfig.flagSkipBlockedAutoplay = "off";
 
   markAllVideoCardsPending();
   markVideoPageAdsPending();
@@ -3630,14 +3637,14 @@ function initializeVideoPage() {
     videoHeaderReady = true;
     addBlacklistManagerButton();
     refreshBlockCountDisplay();
-    startVideoPageProcessing(flag);
+    startVideoPageProcessing();
   }), 5000);
 ;
 
   console.log("[🫥BlackList] 视频播放页已就绪：等待 header 正常后启动屏蔽功能。\n");
 }
 
-function startVideoPageProcessing(flag) {
+function startVideoPageProcessing() {
   initializeObserver("right-container");
   scanAndBlockVideoCards();
   resolveVideoPageAds();
@@ -3651,11 +3658,6 @@ function startVideoPageProcessing(flag) {
     }
   }, 2500);
   initAutoplaySkip();
-  setTimeout(() => {
-    if (globalPluginConfig.flagSkipBlockedAutoplay === "off") {
-      globalPluginConfig.flagSkipBlockedAutoplay = flag;
-    }
-  }, 2500);
   console.log("[🫥BlackList] 视频播放页屏蔽功能已启动（header 已正常）。🍇");
 }
 
