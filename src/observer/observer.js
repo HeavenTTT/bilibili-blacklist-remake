@@ -25,15 +25,25 @@ let observedRoot = null; // 当前实际 observe 的根节点（切视频后可�
 let observedTarget = ""; // 对应的容器 id/选择器，供断连后重连使用
 let headerButtonScheduled = false; // 顶栏管理按钮兜底重挂的合并调度标志
 
+// 插件自己插入的 DOM：卡比遮罩、屏蔽容器（内含屏蔽按钮 / 屏蔽原因 / 分类与视频标签组）、
+// 顶栏管理按钮与管理面板。观察器必须忽略它们 —— 否则这些节点会被 closest() 反查成“卡片”，
+// 让同一张视频被重复入队（分类页尤其明显：容器插在内层 .bili-video-card 里）。
+const PLUGIN_OWNED_SELECTOR =
+  ".bilibili-blacklist-block-container, #bilibili-blacklist-kirby, " +
+  "#bilibili-blacklist-manager-button, #bilibili-blacklist-manager-panel";
+
 /**
  * 从一个新插入的节点里收集匹配指定选择器的元素。
  * 节点自身/祖先命中，或节点内部含有多个命中元素，都会被收集。
+ * 插件自身插入的节点（屏蔽容器 / 卡比遮罩等）会被直接忽略。
  * @param {HTMLElement} node - 新插入的元素节点。
  * @param {string} selectorText - CSS 选择器串。
  * @param {HTMLElement[]} out - 输出数组。
  */
 function collectMatchingElements(node, selectorText, out) {
   if (!selectorText) return;
+  // 插件自己插进去的节点不算“新卡片”
+  if (node.closest && node.closest(PLUGIN_OWNED_SELECTOR)) return;
   const self = node.closest ? node.closest(selectorText) : null;
   if (self) {
     out.push(self);

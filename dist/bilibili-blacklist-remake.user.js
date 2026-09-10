@@ -381,6 +381,7 @@ let isBlockingOperationInProgress = false;
 let lastBlockScanExecutionTime = 0;
 let blockedVideoCards = new Set();
 let processedVideoCards = new WeakSet();
+let queuedRealCards = new WeakSet();
 let videoCardProcessQueue = new Set();
 let tnameDecorateQueue = new Set();
 let isVideoCardQueueProcessing = false;
@@ -635,7 +636,7 @@ function cancelCardBlockReason(card, type, value) {
   if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
     applyPendingFilter(card);
   }
-  processedVideoCards.delete(card);
+  processedVideoCards.delete(realCard || card);
   videoCardProcessQueue.add(card);
   if (!isVideoCardQueueProcessing && typeof processVideoCardQueue === "function") {
     processVideoCardQueue();
@@ -743,6 +744,10 @@ function getRealVideoCardElement(cardElement) {
       }
     }
   }
+  if (isCurrentPageCategory()) {
+    const outerCard = cardElement.closest && cardElement.closest(".feed-card");
+    if (outerCard) return outerCard;
+  }
   return cardElement;
 }
 
@@ -764,10 +769,11 @@ function queryAllVideoCards() {
 }
 
 function processCard(card) {
-  if (processedVideoCards.has(card)) {
+  if (!card) return;
+  const realCard = getRealVideoCardElement(card) || card;
+  if (processedVideoCards.has(realCard) || queuedRealCards.has(realCard)) {
     return;
   }
-  const realCard = getRealVideoCardElement(card);
 
   if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos && realCard) {
     applyPendingFilter(card);
@@ -778,6 +784,7 @@ function processCard(card) {
     addBlockContainerToCard(upName, card);
   }
 
+  queuedRealCards.add(realCard);
   videoCardProcessQueue.add(card);
 }
 
@@ -1464,7 +1471,8 @@ async function processVideoCardQueue() {
     const card = iterator.next().value;
     videoCardProcessQueue.delete(card);
 
-    if (!card || processedVideoCards.has(card)) {
+    const realCardKey = card ? getRealVideoCardElement(card) || card : null;
+    if (!card || processedVideoCards.has(realCardKey)) {
       continue;
     }
     if (card.isConnected === false) {
@@ -1654,7 +1662,7 @@ async function processVideoCardQueue() {
       }
     }
 
-    processedVideoCards.add(card);
+    processedVideoCards.add(realCardKey);
 
     if (usedNetwork) {
       localDecisionStreak = 0;
@@ -3366,8 +3374,13 @@ let observedRoot = null;
 let observedTarget = "";
 let headerButtonScheduled = false;
 
+const PLUGIN_OWNED_SELECTOR =
+  ".bilibili-blacklist-block-container, #bilibili-blacklist-kirby, " +
+  "#bilibili-blacklist-manager-button, #bilibili-blacklist-manager-panel";
+
 function collectMatchingElements(node, selectorText, out) {
   if (!selectorText) return;
+  if (node.closest && node.closest(PLUGIN_OWNED_SELECTOR)) return;
   const self = node.closest ? node.closest(selectorText) : null;
   if (self) {
     out.push(self);
@@ -3513,6 +3526,7 @@ function initializeScript() {
   videoCardProcessQueue = new Set();
   tnameDecorateQueue = new Set();
   processedVideoCards = new WeakSet();
+  queuedRealCards = new WeakSet();
   tnameRetriedCards = new WeakSet();
 
   setupCardButtonDelegation();
@@ -3606,6 +3620,7 @@ function watchSearchPageChange() {
 
 function resetSearchPageCardState() {
   processedVideoCards = new WeakSet();
+  queuedRealCards = new WeakSet();
   tnameRetriedCards = new WeakSet();
   resetSeenCards();
 

@@ -18,7 +18,13 @@ let isShowAllVideos = false; // 是否显示全部视频卡片
 let isBlockingOperationInProgress = false; // 是否正在执行BlockCard扫描操作
 let lastBlockScanExecutionTime = 0; // 上次执行BlockCard扫描的时间戳
 let blockedVideoCards = new Set(); // 存储已屏蔽的视频卡片元素
-let processedVideoCards = new WeakSet(); // 记录已处理过的卡片(避免重复处理，包括 UP主/标题检查和 tname 获取)
+// 记录已处理过的卡片(避免重复处理，包括 UP主/标题检查和 tname 获取)。
+// 键为 getRealVideoCardElement() 归一后的“真实卡片元素”：同一张视频卡片在分类页会同时以
+// 外层 .feed-card 与内层 .bili-video-card 两种元素被观察到，必须按真实元素去重。
+let processedVideoCards = new WeakSet();
+// 已进入队列的“真实卡片元素”。同一张卡片的两种元素只会产生一条队列记录，
+// 避免重复判定、重复提交以及屏蔽计数翻倍。
+let queuedRealCards = new WeakSet();
 let videoCardProcessQueue = new Set(); // 存储待处理的卡片，用于统一的队列处理
 // 低优先级“补分类标签”队列：卡片已由 UP名/正则/软广判定完成，判定本身不再需要接口，
 // 但 flagAlwaysFetchTName 开启时仍要显示分类标签按钮。这些请求排在主队列之后，
@@ -370,7 +376,7 @@ function cancelCardBlockReason(card, type, value) {
   if (globalPluginConfig.flagHideOnLoad && !isShowAllVideos) {
     applyPendingFilter(card);
   }
-  processedVideoCards.delete(card);
+  processedVideoCards.delete(realCard || card);
   videoCardProcessQueue.add(card);
   if (!isVideoCardQueueProcessing && typeof processVideoCardQueue === "function") {
     processVideoCardQueue();
@@ -518,6 +524,15 @@ function getRealVideoCardElement(cardElement) {
       }
     }
   }
+  // 分类页：卡片根节点是外层 .feed-card，但观察器与“屏蔽容器宿主”会拿到内层的
+  // .bili-video-card（插件自己插入的容器就在内层）。若不向上归一，同一张视频会被当成
+  // 两个不同元素：pending 滤镜叠加两层、队列里出现两条记录、屏蔽计数翻倍；而且“解除模糊”
+  // 必须等后一条记录提交才可见（那批是缓存命中、无限速，整批同帧提交）——表现为整批卡片
+  // 一起变清晰，而不是逐张。
+  if (isCurrentPageCategory()) {
+    const outerCard = cardElement.closest && cardElement.closest(".feed-card");
+    if (outerCard) return outerCard;
+  }
   return cardElement;
 }
 
@@ -550,11 +565,13 @@ function queryAllVideoCards() {
  * @param {HTMLElement} card - 视频卡片元素。
  */
 function processCard(card) {
-  // 如果卡片已经处理过，则跳过
-  if (processedVideoCards.has(card)) {
+  if (!card) return;
+  const realCard = getRealVideoCardElement(card) || card;
+  // 同一张视频卡片可能以不同元素（外层 .feed-card / 内层 .bili-video-card）被观察到多次：
+  // 统一按“真实卡片元素”去重，保证一张视频只入队、只判定、只提交一次。
+  if (processedVideoCards.has(realCard) || queuedRealCards.has(realCard)) {
     return;
   }
-  const realCard = getRealVideoCardElement(card);
 
   // --- 未处理阶段：先用 CSS filter 遮盖（模糊2px+灰度20%）---
   // 不往卡片插入按钮/kirby 遮罩子元素、不改 visibility，避免与 B 站 header 的 Vue 渲染竞争
@@ -572,7 +589,9 @@ function processCard(card) {
     addBlockContainerToCard(upName, card);
   }
 
-  // 将卡片添加到处理队列
+  // 将卡片添加到处理队列（队列仍以“原始卡片元素”处理，保持各提取函数的行为不变；
+  // 去重则统一走真实卡片元素）
+  queuedRealCards.add(realCard);
   videoCardProcessQueue.add(card);
 }
 

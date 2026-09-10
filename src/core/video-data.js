@@ -523,7 +523,10 @@ async function processVideoCardQueue() {
     const card = iterator.next().value;
     videoCardProcessQueue.delete(card);
 
-    if (!card || processedVideoCards.has(card)) {
+    // processedVideoCards 以“真实卡片元素”为键（分类页会把内层 .bili-video-card 归一到
+    // 外层 .feed-card），这里必须用同一套归一结果查询，否则同一张卡片的第二条记录会被重复判定。
+    const realCardKey = card ? getRealVideoCardElement(card) || card : null;
+    if (!card || processedVideoCards.has(realCardKey)) {
       continue;
     }
     // 翻页/切集后旧卡片已从文档移除：直接丢弃。
@@ -739,7 +742,7 @@ async function processVideoCardQueue() {
       }
     }
 
-    processedVideoCards.add(card); // 标记卡片已处理
+    processedVideoCards.add(realCardKey); // 标记卡片已处理（键为真实卡片元素）
 
     // 只有真正发生网络请求时才限速：纯本地命中的卡片立即处理下一张。
     // （旧实现对每张卡片无差别 sleep 200ms，一页 30 张仅等待就要 6 秒。）

@@ -16,6 +16,7 @@ function initializeScript() {
   videoCardProcessQueue = new Set();
   tnameDecorateQueue = new Set();
   processedVideoCards = new WeakSet();
+  queuedRealCards = new WeakSet(); // 重置“已入队的真实卡片元素”去重表
   tnameRetriedCards = new WeakSet(); // 重置 tname 解析失败重试记录
 
   // 统一的事件委托：所有“屏蔽/标签”按钮共用一个监听器，避免每按钮各自绑定点击导致失效。
@@ -159,6 +160,7 @@ function watchSearchPageChange() {
  */
 function resetSearchPageCardState() {
   processedVideoCards = new WeakSet();
+  queuedRealCards = new WeakSet(); // 翻页后节点可能被复用，去重表一并重置
   tnameRetriedCards = new WeakSet();
   resetSeenCards();
 
