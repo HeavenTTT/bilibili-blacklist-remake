@@ -12,6 +12,10 @@ let videoTagListElement;
 let configListElement;
 let blockCountTitleElement;
 let blockCountDisplayElement = null;
+// 面板头部统计明细的数值元素（Map: row.key -> <b>），创建一次后只更新 textContent
+let blockStatsValueElements = null;
+// 统计明细是否展开（默认收起；收起时 refreshBlockCountDisplay 跳过 11 个数值的写入）
+let isBlockStatsExpanded = false;
 
 // 内部状态变量
 let isShowAllVideos = false; // 是否显示全部视频卡片
@@ -31,12 +35,18 @@ let videoCardProcessQueue = new Set(); // 存储待处理的卡片，用于统�
 // 保证它们不会拖慢其它卡片的判定。
 let tnameDecorateQueue = new Set();
 let isVideoCardQueueProcessing = false; // 是否正在处理队列
-let countBlockInfo = 0; // 已屏蔽视频计数
+let countBlockInfo = 0; // 已屏蔽视频计数（UP/标题名命中）
 let countBlockAD = 0; // 已屏蔽广告计数
-let countBlockTName = 0; // 已屏蔽标签名计数
+let countBlockTName = 0; // 已屏蔽分类标签计数
 let countBlockVideoTag = 0; // 已屏蔽视频标签计数
 let countBlockVertical = 0; // 已屏蔽竖屏计数
 let countBlockCM = 0; // 已屏蔽cm.bilibili.com软广计数
+// 以下为“非屏蔽原因”的附加统计（面板头部明细用，按页面生命周期累计、不持久化）
+let countProcessedCards = 0; // 累计判定完成的卡片数（含取消屏蔽后的重新判定）
+let countApiViewRequests = 0; // view 接口真实请求次数（命中缓存不计）
+let countApiTagRequests = 0; // 视频标签接口真实请求次数（命中缓存不计）
+let countNetworkInterceptItems = 0; // 网络拦截累计过滤掉的条目数
+let countNetworkInterceptResponses = 0; // 网络拦截实际改写过的响应次数
 
 // “未处理”卡片：进入视频页时先用 CSS filter 遮盖（不插按钮/kirby 遮罩子元素），
 // 避免与 B 站 header 渲染竞争。该 WeakSet 记录已加 filter 的卡片，判定完成后清除。

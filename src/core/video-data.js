@@ -96,6 +96,7 @@ async function getBilibiliVideoApiData(bvid) {
     return cached.data;
   }
   await bvApiThrottle(); // 连续调用防限流
+  countApiViewRequests++; // 统计：真实发出的 view 请求（命中缓存不会走到这里）
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
@@ -149,6 +150,7 @@ async function getBilibiliVideoTagApiData(bvid) {
     return cached.data;
   }
   await bvApiThrottle(); // 连续调用防限流
+  countApiTagRequests++; // 统计：真实发出的视频标签请求（命中缓存不会走到这里）
   const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${encodeURIComponent(bvid)}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
@@ -725,6 +727,7 @@ async function processVideoCardQueue() {
     }
 
     processedVideoCards.add(realCardKey); // 标记卡片已处理（键为真实卡片元素）
+    countProcessedCards++; // 统计：累计判定完成的卡片数
 
     // 只有真正发生网络请求时才限速：纯本地命中的卡片立即处理下一张。
     // （旧实现对每张卡片无差别 sleep 200ms，一页 30 张仅等待就要 6 秒。）

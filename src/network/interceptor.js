@@ -42,7 +42,7 @@ function netUrlMatches(url) {
 }
 
 /**
- * 改写推荐接口响应文本：删除命中黑名单的条目。
+ * 改写推荐接口响应文本：删除命中黑名单的条目，并累计面板统计。
  * 没有任何条目被过滤时返回原文本（调用方据此复用原响应，避免白做一次
  * JSON 序列化 + new Response —— 后者还会丢掉 res.url / redirected）。
  * @param {string} url           请求 URL
@@ -65,6 +65,9 @@ function rewriteRecommendation(url, responseText) {
         return !isBlacklisted(upName, title);
       });
       if (parsed.data.item.length === before) return responseText;
+      countNetworkInterceptItems += before - parsed.data.item.length;
+      countNetworkInterceptResponses++;
+      refreshBlockCountDisplay();
       console.log(
         "[🫥BlackList] 网络拦截: 推荐流已过滤 " +
         (before - parsed.data.item.length) + " 条"
@@ -83,6 +86,9 @@ function rewriteRecommendation(url, responseText) {
         return !isBlacklisted(upName, title);
       });
       if (parsed.data.length === countBefore) return responseText;
+      countNetworkInterceptItems += countBefore - parsed.data.length;
+      countNetworkInterceptResponses++;
+      refreshBlockCountDisplay();
       console.log(
         "[🫥BlackList] 网络拦截: 相关推荐已过滤 " +
         (countBefore - parsed.data.length) + " 条"

@@ -376,6 +376,8 @@ let videoTagListElement;
 let configListElement;
 let blockCountTitleElement;
 let blockCountDisplayElement = null;
+let blockStatsValueElements = null;
+let isBlockStatsExpanded = false;
 
 let isShowAllVideos = false;
 let isBlockingOperationInProgress = false;
@@ -392,6 +394,11 @@ let countBlockTName = 0;
 let countBlockVideoTag = 0;
 let countBlockVertical = 0;
 let countBlockCM = 0;
+let countProcessedCards = 0;
+let countApiViewRequests = 0;
+let countApiTagRequests = 0;
+let countNetworkInterceptItems = 0;
+let countNetworkInterceptResponses = 0;
 
 const pendingFilterCards = new WeakSet();
 
@@ -1144,6 +1151,7 @@ async function getBilibiliVideoApiData(bvid) {
     return cached.data;
   }
   await bvApiThrottle();
+  countApiViewRequests++;
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
@@ -1189,6 +1197,7 @@ async function getBilibiliVideoTagApiData(bvid) {
     return cached.data;
   }
   await bvApiThrottle();
+  countApiTagRequests++;
   const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${encodeURIComponent(bvid)}`;
   const controller =
     typeof AbortController === "function" ? new AbortController() : null;
@@ -1662,6 +1671,7 @@ async function processVideoCardQueue() {
     }
 
     processedVideoCards.add(realCardKey);
+    countProcessedCards++;
 
     if (usedNetwork) {
       localDecisionStreak = 0;
@@ -1854,16 +1864,47 @@ function initTampermonkeyMenu() {
   });
 }
 
+const BLOCK_STATS_GROUPS = [
+  {
+    title: "屏蔽原因明细",
+    rows: [
+      { key: "info", label: "UP/标题名", getText: () => String(countBlockInfo) },
+      { key: "ad", label: "广告", getText: () => String(countBlockAD) },
+      { key: "cm", label: "CM 软广", getText: () => String(countBlockCM) },
+      { key: "tname", label: "分类标签", getText: () => String(countBlockTName) },
+      { key: "videoTag", label: "视频标签", getText: () => String(countBlockVideoTag) },
+      { key: "vertical", label: "竖屏", getText: () => String(countBlockVertical) },
+    ],
+  },
+  {
+    title: "网络与请求",
+    rows: [
+      { key: "netItems", label: "网络拦截", getText: () => `${countNetworkInterceptItems} 条` },
+      { key: "netResponses", label: "拦截响应", getText: () => `${countNetworkInterceptResponses} 次` },
+      { key: "processed", label: "已判定卡片", getText: () => String(countProcessedCards) },
+      { key: "apiView", label: "view 请求", getText: () => String(countApiViewRequests) },
+      { key: "apiTag", label: "标签请求", getText: () => String(countApiTagRequests) },
+    ],
+  },
+];
+
 function refreshBlockCountDisplay() {
   const headerNotReady = isCurrentPageVideo() && !videoHeaderReady;
-  if (!headerNotReady) {
-    if (blockCountDisplayElement) {
-      blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
-    }
-    if (blockCountTitleElement) {
-      blockCountTitleElement.textContent = `已屏蔽视频 (${blockedVideoCards.size} = ${countBlockInfo} + ${countBlockAD} + ${countBlockCM} + ${countBlockTName} + ${countBlockVideoTag} + ${countBlockVertical})`;
-    }
+  if (headerNotReady) return;
+  if (blockCountDisplayElement) {
+    blockCountDisplayElement.textContent = `${blockedVideoCards.size}`;
   }
+  if (blockCountTitleElement) {
+    blockCountTitleElement.textContent = `已屏蔽视频 ${blockedVideoCards.size}`;
+  }
+  if (!blockStatsValueElements) return;
+  if (!isBlockStatsExpanded) return;
+  BLOCK_STATS_GROUPS.forEach((group) => {
+    group.rows.forEach((row) => {
+      const valueElement = blockStatsValueElements.get(row.key);
+      if (valueElement) valueElement.textContent = row.getText();
+    });
+  });
 }
 
 function createPanelButton(text, bgColor, onClick) {
@@ -2452,17 +2493,72 @@ function createBlacklistPanel() {
 
   blockCountTitleElement = document.createElement("h3");
   blockCountTitleElement.title =
-    "总数 =(UP/标题 + 广告 + CM + 分类 + 视频标签 + 竖屏)";
+    "总数 = UP/标题名 + 广告 + CM 软广 + 分类标签 + 视频标签 + 竖屏";
+
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "bilibili-blacklist-panel-title";
+  titleWrap.appendChild(blockCountTitleElement);
+
+  const statsContainer = document.createElement("div");
+  statsContainer.className = "bilibili-blacklist-stats";
+  blockStatsValueElements = new Map();
+  BLOCK_STATS_GROUPS.forEach((group) => {
+    const groupTitle = document.createElement("div");
+    groupTitle.className = "bilibili-blacklist-stats-group";
+    groupTitle.textContent = group.title;
+    statsContainer.appendChild(groupTitle);
+    group.rows.forEach((row) => {
+      const rowElement = document.createElement("div");
+      rowElement.className = "bilibili-blacklist-stat-row";
+      rowElement.title = row.label;
+      const labelElement = document.createElement("span");
+      labelElement.textContent = row.label;
+      const valueElement = document.createElement("b");
+      valueElement.textContent = "0";
+      rowElement.appendChild(labelElement);
+      rowElement.appendChild(valueElement);
+      statsContainer.appendChild(rowElement);
+      blockStatsValueElements.set(row.key, valueElement);
+    });
+  });
+  titleWrap.appendChild(statsContainer);
+  statsContainer.style.display = isBlockStatsExpanded ? "" : "none";
+
+  const headerActions = document.createElement("div");
+  headerActions.className = "bilibili-blacklist-panel-actions";
+
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "bilibili-blacklist-panel-toggle";
+  toggleBtn.innerHTML = getChevronIconSVG();
+  const refreshToggleState = () => {
+    toggleBtn.classList.toggle("is-expanded", isBlockStatsExpanded);
+    toggleBtn.title = isBlockStatsExpanded ? "收起统计明细" : "展开统计明细";
+    toggleBtn.setAttribute("aria-label", toggleBtn.title);
+    toggleBtn.setAttribute("aria-expanded", isBlockStatsExpanded ? "true" : "false");
+    statsContainer.style.display = isBlockStatsExpanded ? "" : "none";
+  };
+  toggleBtn.addEventListener("click", () => {
+    isBlockStatsExpanded = !isBlockStatsExpanded;
+    refreshToggleState();
+    if (isBlockStatsExpanded) refreshBlockCountDisplay();
+  });
+  refreshToggleState();
 
   const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
   closeBtn.className = "bilibili-blacklist-panel-close";
-  closeBtn.textContent = "×";
+  closeBtn.title = "关闭面板";
+  closeBtn.setAttribute("aria-label", "关闭面板");
+  closeBtn.innerHTML = getCloseIconSVG();
   closeBtn.addEventListener("click", () => {
     managerPanel.style.display = "none";
   });
 
-  header.appendChild(blockCountTitleElement);
-  header.appendChild(closeBtn);
+  headerActions.appendChild(toggleBtn);
+  headerActions.appendChild(closeBtn);
+  header.appendChild(titleWrap);
+  header.appendChild(headerActions);
 
   const contentContainer = document.createElement("div");
   contentContainer.className = "bilibili-blacklist-panel-body";
@@ -2897,12 +2993,118 @@ GM_addStyle(`
     align-items: center;
   }
 
-  .bilibili-blacklist-panel-close {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0 8px;
+  /* 面板标题 + 统计明细（标题一次创建、只更新数值，见 refreshBlockCountDisplay） */
+  .bilibili-blacklist-panel-title {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .bilibili-blacklist-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px 14px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #909399;
+  }
+
+  .bilibili-blacklist-stats-group {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-weight: 600;
+    color: #fb7299;
+  }
+
+  .bilibili-blacklist-stat-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .bilibili-blacklist-stat-row > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bilibili-blacklist-stat-row > b {
+    flex: 0 0 auto;
+    font-weight: 600;
     color: var(--text2, #000);
+  }
+
+  /* 头部右侧操作按钮组：[展开/收起统计明细] [关闭面板] */
+  .bilibili-blacklist-panel-actions {
+    display: flex;
+    align-items: flex-start;
+    flex: 0 0 auto;
+    gap: 8px;
+    /* 头部变高（标题 + 可展开的统计明细）后，按钮贴右上角与标题对齐，而不是垂直居中 */
+    align-self: flex-start;
+    margin-top: 2px;
+  }
+
+  /* 展开/收起按钮：与关闭按钮同尺寸，中性底色 + 会翻转的箭头图标 */
+  .bilibili-blacklist-panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--text2, #000);
+    background-color: #f1f2f3;
+    transition: background-color 0.2s;
+  }
+
+  .bilibili-blacklist-panel-toggle:hover {
+    opacity: 1;
+    background-color: #e3e5e7;
+  }
+
+  .bilibili-blacklist-panel-toggle svg {
+    display: block;
+    transition: transform 0.2s;
+  }
+
+  .bilibili-blacklist-panel-toggle.is-expanded svg {
+    transform: rotate(180deg);
+  }
+
+  /* 关闭按钮：圆形底色 + 白色 X 图标（原实现是纯文本「×」，太小不显眼） */
+  .bilibili-blacklist-panel-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: #fff;
+    background-color: #fb7299;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    transition: background-color 0.2s, transform 0.2s;
+  }
+
+  .bilibili-blacklist-panel-close:hover {
+    opacity: 1;
+    background-color: #e05f86;
+    transform: scale(1.06);
+  }
+
+  .bilibili-blacklist-panel-close svg {
+    display: block;
   }
 
   .bilibili-blacklist-panel-body {
@@ -3095,6 +3297,22 @@ GM_addStyle(`
     filter: grayscale(95%);
   }
 `);
+
+function getCloseIconSVG() {
+  return `
+      <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+          <path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" fill="none" />
+      </svg>
+  `;
+}
+
+function getChevronIconSVG() {
+  return `
+      <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+          <path d="M6 9 L12 15 L18 9" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+      </svg>
+  `;
+}
 
 function getKirbySVG() {
   return `
@@ -4464,6 +4682,9 @@ function rewriteRecommendation(url, responseText) {
         return !isBlacklisted(upName, title);
       });
       if (parsed.data.item.length === before) return responseText;
+      countNetworkInterceptItems += before - parsed.data.item.length;
+      countNetworkInterceptResponses++;
+      refreshBlockCountDisplay();
       console.log(
         "[🫥BlackList] 网络拦截: 推荐流已过滤 " +
         (before - parsed.data.item.length) + " 条"
@@ -4481,6 +4702,9 @@ function rewriteRecommendation(url, responseText) {
         return !isBlacklisted(upName, title);
       });
       if (parsed.data.length === countBefore) return responseText;
+      countNetworkInterceptItems += countBefore - parsed.data.length;
+      countNetworkInterceptResponses++;
+      refreshBlockCountDisplay();
       console.log(
         "[🫥BlackList] 网络拦截: 相关推荐已过滤 " +
         (countBefore - parsed.data.length) + " 条"
