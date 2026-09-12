@@ -143,7 +143,7 @@ function ensureBlockContainerOnCard(cardElement) {
 function addBlockContainerToCard(upName, cardElement) {
   const container = ensureBlockContainerOnCard(cardElement);
   if (!container.querySelector(".bilibili-blacklist-block-btn")) {
-    const blockButton = createBlockUpButton(upName, cardElement);
+    const blockButton = createBlockUpButton(upName);
     container.appendChild(blockButton);
   }
   return container;
@@ -216,7 +216,7 @@ function hideVideoCard(cardElement, type = "none", reasonValue = null) {
   const realCardToBlock = getRealVideoCardElement(cardElement);
   if (!realCardToBlock) {
     console.warn(
-      "[bililili-blacklist] hideVideoCard: realCardToBlock is null"
+      "[🫥BlackList] hideVideoCard: realCardToBlock is null"
     );
     return;
   }
@@ -339,9 +339,7 @@ function isReasonCancellable(type, reasonValue) {
 function cancelCardBlockReason(card, type, value) {
   if (!card || !value) return;
   if (type === "info") {
-    const idx = exactMatchBlacklist.findIndex(
-      (item) => item.toLowerCase() === String(value).toLowerCase()
-    );
+    const idx = findExactBlacklistIndex(value);
     if (idx === -1) return; // 规则已不存在，无需处理
     exactMatchBlacklist.splice(idx, 1);
     saveBlacklistsToStorage();
@@ -378,7 +376,7 @@ function cancelCardBlockReason(card, type, value) {
   }
   processedVideoCards.delete(realCard || card);
   videoCardProcessQueue.add(card);
-  if (!isVideoCardQueueProcessing && typeof processVideoCardQueue === "function") {
+  if (!isVideoCardQueueProcessing) {
     processVideoCardQueue();
   }
   refreshBlockCountDisplay();
@@ -396,10 +394,7 @@ function setBlockReasonOnCard(cardElement, type, reasonValue = null) {
   // 广告等卡片未经过 scanAndBlockVideoCards 流程，可能不存在容器，需确保创建。
   // 播放页广告位的 DOM 结构与视频卡片完全不同（没有 .card-box，且常依赖自身定位/浮动布局），
   // 走 ads.js 里独立的 ensureAdBlockContainer()，避免 getBlockContainerHost 的卡片专用分支。
-  const isVideoPageAd =
-    type === "ad" &&
-    isCurrentPageVideo() &&
-    typeof ensureAdBlockContainer === "function";
+  const isVideoPageAd = type === "ad" && isCurrentPageVideo();
   const container = isVideoPageAd
     ? ensureAdBlockContainer(cardElement)
     : ensureBlockContainerOnCard(cardElement);
@@ -479,6 +474,27 @@ function unmarkBlockedCard(realCard) {
     decrementBlockCounter(realCard.getAttribute("data-bl-block-type"));
   }
   realCard.removeAttribute("data-bl-block-type");
+}
+
+/**
+ * 清理已经从文档移除的“已屏蔽卡片”记录。
+ *
+ * blockedVideoCards 是强引用 Set（需要遍历，故不能用 WeakSet）：经过搜索页翻页/切集、
+ * 主页无限滚动后，被 B 站移除的节点会一直留在这里 —— 既占内存，又会让“取消/恢复屏蔽”
+ * 去操作早已不在文档里的节点（fadeInKirbyOverlay 里的同步布局白做一遍）。
+ * 这里顺手调用 unmarkBlockedCard 回退对应计数，保持“总数 = 各类型之和”的显示口径。
+ */
+function pruneDisconnectedBlockedCards() {
+  if (blockedVideoCards.size === 0) return;
+  let stale = null;
+  blockedVideoCards.forEach((card) => {
+    if (!card || card.isConnected === false) {
+      if (!stale) stale = [];
+      stale.push(card);
+    }
+  });
+  if (!stale) return;
+  stale.forEach((card) => unmarkBlockedCard(card));
 }
 
 /**
@@ -619,7 +635,8 @@ function scanAndBlockVideoCards() {
       processVideoCardQueue();
     }
 
-    // 刷新屏蔽计数显示
+    // 刷新屏蔽计数显示（先清掉已从文档移除的卡片记录，计数才与页面一致）
+    pruneDisconnectedBlockedCards();
     refreshBlockCountDisplay();
     // 修正主页布局
     fixMainPageLayout();
@@ -648,9 +665,10 @@ function fixMainPageLayout() {
         child.style.visibility !== "hidden"
       ) {
         if (visibleIndex <= 6) {
-          child.style.marginTop = "0px";
+          // 只在值真的变化时写样式：这段代码每次扫描都会跑，无谓的 style 写入会触发布局
+          if (child.style.marginTop !== "0px") child.style.marginTop = "0px";
         } else if (visibleIndex < 12) {
-          child.style.marginTop = "24px";
+          if (child.style.marginTop !== "24px") child.style.marginTop = "24px";
         } else {
           break;
         }
@@ -665,6 +683,7 @@ function fixMainPageLayout() {
  */
 function toggleShowAllBlockedVideos() {
   isShowAllVideos = !isShowAllVideos;
+  pruneDisconnectedBlockedCards(); // 只对仍存在的卡片做显隐/遮罩切换
   blockedVideoCards.forEach((card) => {
     const overlay = card.querySelector("#bilibili-blacklist-kirby");
     if (overlay) {
@@ -750,19 +769,31 @@ function isExactBlacklisted(upName) {
 }
 
 /**
+ * 在精确匹配黑名单中查找规则下标（忽略大小写）。
+ * 匹配 / 取消 / 新增 / 移除四处的比较口径统一走这里，
+ * 避免出现“能匹配到但删不掉”或“同一 UP 名大小写不同被加两条规则”。
+ * @param {string} upName - 要查找的UP主名称。
+ * @returns {number} 命中下标；未命中返回 -1。
+ */
+function findExactBlacklistIndex(upName) {
+  const lowerCaseUpName = String(upName == null ? "" : upName).toLowerCase();
+  if (!lowerCaseUpName) return -1;
+  for (let i = 0; i < exactMatchBlacklist.length; i++) {
+    if (String(exactMatchBlacklist[i]).toLowerCase() === lowerCaseUpName) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
  * 返回与 UP 名精确匹配的黑名单条目（用于显示具体原因与生成放行 key）。
  * @param {string} upName - 要检查的UP主名称。
  * @returns {string|null}
  */
 function getExactBlacklistMatch(upName) {
-  const lowerCaseUpName = (upName || "").toLowerCase();
-  if (!lowerCaseUpName) return null;
-  for (let i = 0; i < exactMatchBlacklist.length; i++) {
-    if (exactMatchBlacklist[i].toLowerCase() === lowerCaseUpName) {
-      return exactMatchBlacklist[i];
-    }
-  }
-  return null;
+  const index = findExactBlacklistIndex(upName);
+  return index === -1 ? null : exactMatchBlacklist[index];
 }
 
 /**
@@ -812,7 +843,7 @@ function testRegex(re, text) {
 function addToExactBlacklist(upName, cardElement = null) {
   try {
     if (!upName) return;
-    if (!exactMatchBlacklist.includes(upName)) {
+    if (findExactBlacklistIndex(upName) === -1) {
       exactMatchBlacklist.push(upName);
       saveBlacklistsToStorage();
       refreshAllPanelTabs();
@@ -832,8 +863,8 @@ function addToExactBlacklist(upName, cardElement = null) {
  */
 function removeFromExactBlacklist(upName) {
   try {
-    if (exactMatchBlacklist.includes(upName)) {
-      const index = exactMatchBlacklist.indexOf(upName);
+    const index = findExactBlacklistIndex(upName);
+    if (index !== -1) {
       exactMatchBlacklist.splice(index, 1);
       saveBlacklistsToStorage();
       refreshExactMatchList();
@@ -860,7 +891,7 @@ function addToTagNameBlacklist(tagName, cardElement = null) {
       if (cardElement) {
         hideVideoCard(cardElement, "tname");
       }
-      hideAllCardsByTagName(tagName);
+      hideAllCardsByTagName();
     }
   } catch (e) {
     console.error("[🫥BlackList] 添加标签黑名单出错:", e);
@@ -939,10 +970,9 @@ function hideAllCardsByUpName(upName) {
 }
 
 /**
- * 隐藏所有匹配指定标签名的视频卡片。
- * @param {string} tagName - 要匹配的标签名。
+ * 隐藏所有命中分类标签规则的视频卡片（不限于某一具体标签：与 hideAllCardsByUpName 口径一致）。
  */
-function hideAllCardsByTagName(tagName) {
+function hideAllCardsByTagName() {
   const videoCards = queryAllVideoCards();
   if (!videoCards) return;
   videoCards.forEach(card => {

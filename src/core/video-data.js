@@ -9,7 +9,10 @@ let tnameRetriedCards = new WeakSet();
 // 记录“视频标签接口第一次无返回、已被重排回队列重试”的卡片（弱引用）。
 // 重试仍失败时按“无法确定是否安全”处理为放行（不再屏蔽）。
 let videoTagRetriedCards = new WeakSet();
-// 页面是否可见/前台：切到后台（document.hidden）时暂停队列处理，切回后继续。
+// 页面是否可见/前台：切到后台（document.hidden，含被其它窗口完全遮挡）时暂停队列处理，切回后继续。
+// 【有意设计，勿改】不要改成“后台也照常判定”：同时开多个 B 站页面时，多页并发请求
+// view / /x/tag/archive/tags 会明显提高触发限流的概率，暂停判定等于把并发压回单页。
+// 代价：后台页面里的卡片会一直停在「未处理」的模糊遮盖态 —— 刻意的视觉状态，不是 bug。
 let isPageCurrentlyActive = true;
 /**
  * 获取视频卡片的链接。
@@ -352,33 +355,6 @@ function getBlacklistedVideoTag(cardElement) {
   return null;
 }
 
-function isCardBlacklistedByVideoTag(cardElement) {
-  return !!getBlacklistedVideoTag(cardElement);
-}
-
-/**
- * 向标签组添加一个“不重复”的标签按钮。
- * 同一分类标签可能同时出现在 data.tname / data.tname_v2 / tid_v2 映射出的 name / name_v2
- * 里，直接都加会出现重复按钮。这里按文本去重，只保留一个。
- * @param {HTMLElement} group - .bilibili-blacklist-tname-group 容器。
- * @param {string} tagName - 标签名。
- * @param {HTMLElement} card - 所属卡片。
- * @returns {boolean} 只要传入合法的标签名就返回 true（表示该卡片确实有可展示的标签）。
- */
-function addTNameButtonToGroup(group, tagName, card) {
-  if (tagName == null) return false;
-  const name = String(tagName).trim();
-  if (!name) return false;
-  const existing = group.querySelectorAll(".bilibili-blacklist-tname");
-  for (const el of existing) {
-    if ((el.textContent || "").trim() === name) {
-      return true; // 已存在重复按钮，不再新增，但视为“有标签”
-    }
-  }
-  group.appendChild(createTNameBlockButton(name, card));
-  return true;
-}
-
 /**
  * 请求接口并把分类标签按钮挂到卡片上。
  * 主判定与“补标签”两条路径共用。
@@ -392,9 +368,15 @@ async function attachTNameGroupToCard(card, bvId) {
   const needViewApi =
     globalPluginConfig.flagTName || globalPluginConfig.flagVertical;
   const needVideoTagApi = globalPluginConfig.flagVideoTag;
+  // 预测“本轮是否真的会发请求”，供队列决定要不要限速等待：
+  //   - 两个接口各自查自己的缓存：view → bvApiDataCache，tag → bvTagApiDataCache，
+  //     不要互相串用（view 缓存新鲜不代表 tag 有缓存，反之亦然）；
+  //   - 与两个请求函数的前置判断保持一致：无效/异常长度的 BV 会直接返回 null、不发请求，
+  //     否则会把“没发请求”误判成发过请求而白等一次限速。
+  const canRequestApi = !!bvId && bvId.length < 24;
   const usedNetwork =
-    (needViewApi && !hasFreshBvApiCache(bvId)) ||
-    (needVideoTagApi && !hasFreshBvTagApiCache(bvId));
+    (needViewApi && canRequestApi && !hasFreshBvApiCache(bvId)) ||
+    (needVideoTagApi && canRequestApi && !hasFreshBvTagApiCache(bvId));
   // 串行获取：先 view（分类/竖屏），再 tag（视频标签），不并发。
   const viewData = needViewApi ? await getBilibiliVideoApiData(bvId) : null;
   const videoTagData = needVideoTagApi
@@ -431,7 +413,7 @@ async function attachTNameGroupToCard(card, bvId) {
           const s = String(name || "").trim();
           if (!s) return;
           if (tnameButtons.some((b) => b.textContent.trim() === s)) return;
-          tnameButtons.push(createTNameBlockButton(s, card));
+          tnameButtons.push(createTNameBlockButton(s));
         };
         if (globalPluginConfig.flagTName) {
           pushTName(data.tname);
@@ -453,7 +435,7 @@ async function attachTNameGroupToCard(card, bvId) {
             const s = String(tagName || "").trim();
             if (!s || videoTagSeen.has(s)) return;
             videoTagSeen.add(s);
-            videoTagButtons.push(createVideoTagBlockButton(s, card));
+            videoTagButtons.push(createVideoTagBlockButton(s));
           });
         }
 
@@ -760,9 +742,7 @@ async function processVideoCardQueue() {
   isVideoCardQueueProcessing = false;
   refreshBlockCountDisplay();
   // 处理队列为空：触发分区表 feed 增量更新（popular / ranking，12 小时节流，内部自行判断）。
-  if (typeof updateTNameListFromFeed === "function") {
-    updateTNameListFromFeed();
-  }
+  updateTNameListFromFeed();
 }
 
 // 异步等待函数

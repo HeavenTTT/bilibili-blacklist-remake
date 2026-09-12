@@ -21,6 +21,8 @@
 - **接口请求节流**：`getBilibiliVideoApiData` / `getBilibiliVideoTagApiData` 在真正发请求前经全局最小间隔节流（默认 50ms，命中缓存不等待），避免队列 / 自动连播 / 相关推荐扫描等连续调用触发 B 站限流。
 - **修复自动连播配置被重置**：移除视频页启动时对 `flagSkipBlockedAutoplay` 的“临时置 off / 2.5s 后恢复”逻辑，避免面板显示与实际持久化值被临时状态覆盖。
 - **切到后台暂停处理**：新增 `isPageCurrentlyActive`（`visibilitychange` 维护），页面切到后台（`document.hidden`）时暂停视频卡片队列处理，切回后恢复。
+  **有意设计、勿"优化"为后台继续判定**：多开 B 站页面时并发调用 `view` / `/x/tag/archive/tags` 更容易触发限流，暂停即把并发压回单页；
+  代价是后台页面里的卡片会保持「未处理」的模糊遮盖（刻意的视觉状态，不是 bug）。
 
 ## [0.8.0] - 屏蔽原因可视化与一键取消（删除规则 + 刷新卡片）
 

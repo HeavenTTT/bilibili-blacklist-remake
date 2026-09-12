@@ -18,6 +18,7 @@ function initializeScript() {
   processedVideoCards = new WeakSet();
   queuedRealCards = new WeakSet(); // 重置“已入队的真实卡片元素”去重表
   tnameRetriedCards = new WeakSet(); // 重置 tname 解析失败重试记录
+  videoTagRetriedCards = new WeakSet(); // 重置视频标签接口重试记录
 
   // 统一的事件委托：所有“屏蔽/标签”按钮共用一个监听器，避免每按钮各自绑定点击导致失效。
   setupCardButtonDelegation();
@@ -162,6 +163,7 @@ function resetSearchPageCardState() {
   processedVideoCards = new WeakSet();
   queuedRealCards = new WeakSet(); // 翻页后节点可能被复用，去重表一并重置
   tnameRetriedCards = new WeakSet();
+  videoTagRetriedCards = new WeakSet(); // 与 tname 重试记录一起重置，避免新一页的卡片被误判为“已重试过”
   resetSeenCards();
 
   // 清掉可能被复用节点带过来的旧装饰（屏蔽按钮/分类标签/遮罩/隐藏样式）
@@ -193,9 +195,16 @@ function isCurrentPageVideo() {
  * 进入视频页时
  *   “未处理”状态（用 CSS filter 遮盖，不插入按钮/kirby 遮罩子元素，避免与 B 站 header
  *   的 Vue 渲染竞争 → 导致 header 被顶掉）。视频正常播放。
- *   等右侧导航栏 .right-entry 渲染完成（header 完全正常）后，再统一启动：观察器 +
- *   扫描屏蔽 + 广告屏蔽 + 自动连播 + 补扫，并逐卡判定。
+ *   先静默 VIDEO_PAGE_SETTLE_MS，再等右侧导航栏 .right-entry 渲染完成（header 完全正常），
+ *   然后统一启动：观察器 + 扫描屏蔽 + 广告屏蔽 + 自动连播 + 补扫，并逐卡判定。
  */
+// 进入播放页后的固定静默期：期间不碰 header、不启动处理（有意设计，见下方注释）
+const VIDEO_PAGE_SETTLE_MS = 5000;
+// 静默期结束后等待 .right-entry 出现的最长时间
+const VIDEO_PAGE_HEADER_WAIT_MS = 15000;
+// 播放页处理是否已启动（正常路径 / 顶栏未出现的兜底路径只启动一次）
+let videoPageProcessingStarted = false;
+
 function initializeVideoPage() {
   console.log("[🫥BlackList] 播放页已加载（未处理卡片先 filter 遮盖，等 header 正常后启动）。🍇");
 
@@ -205,15 +214,44 @@ function initializeVideoPage() {
   // （ads.js 求值期已调用过一次，这里再调一次是幂等的，用于覆盖配置在此期间被改动的情况）
   markVideoPageAdsPending();
 
-  // 2) 等 header 完全正常（.right-entry 渲染完成）后再启动完整处理
+  // 2) 故意先留一段静默期（VIDEO_PAGE_SETTLE_MS），再等 .right-entry 就绪后才启动完整处理。
+  //
+  //    为什么是「5s + 等元素」两步、而不是「等元素出现就启动」：
+  //    B 站顶栏是 Vue 延迟渲染的，元素出现≠渲染完成；过早往 .right-entry 里插入我们的 li
+  //    会被随后的重渲染顶掉（历史 bug：header 被顶掉/按钮消失）。所以先整体静默 5s，
+  //    再确认 .right-entry 已存在才动手。这是**有意设计**，不要合并成
+  //    waitForContainer(".right-entry", cb, 250, 5000)（那会去掉静默期）。
+  //    参见 ads.js 顶部 P1 注释、README「保留的优化：视频页延迟 5 秒启用」、
+  //    TEST_FLOW.md §7；videotest.md 记录过“去掉 5 秒”的实验并已回滚。
   videoHeaderReady = false;
-  const timeout = setTimeout(() =>  waitForContainer(".right-entry", () => {
-    videoHeaderReady = true;
-    addBlacklistManagerButton();        // 顶栏就绪后才写 header 元素（管理按钮）
-    refreshBlockCountDisplay();
-    startVideoPageProcessing();         // header 正常后才做卡片处理
-  }), 5000);
-;
+  videoPageProcessingStarted = false;
+  setTimeout(
+    () =>
+      waitForContainer(
+        ".right-entry",
+        () => {
+          videoHeaderReady = true;
+          addBlacklistManagerButton(); // 顶栏就绪后才写 header 元素（管理按钮）
+          refreshBlockCountDisplay();
+          startVideoPageProcessing(); // header 正常后才做卡片处理
+        },
+        250,
+        VIDEO_PAGE_HEADER_WAIT_MS
+      ),
+    VIDEO_PAGE_SETTLE_MS
+  );
+
+  // 3) 兜底：万一 .right-entry 一直没出现（改版/A-B 实验），waitForContainer 超时后
+  //    onFound 不会执行，卡片就会永远停在 pending 遮盖态（全糊着且不再判定）。
+  //    这里强制启动：不写顶栏（保持 header 原样），只做卡片/广告处理。
+  setTimeout(() => {
+    if (videoPageProcessingStarted) return;
+    console.warn(
+      "[🫥BlackList] 顶栏 .right-entry 未在预期时间内出现，强制启动播放页处理（跳过顶栏管理按钮）。"
+    );
+    videoHeaderReady = false; // 明确不写顶栏元素
+    startVideoPageProcessing();
+  }, VIDEO_PAGE_SETTLE_MS + VIDEO_PAGE_HEADER_WAIT_MS + 1000);
 
   console.log("[🫥BlackList] 视频播放页已就绪：等待 header 正常后启动屏蔽功能。\n");
 }
@@ -221,9 +259,16 @@ function initializeVideoPage() {
 /**
  * 视频页在 header 完全正常后启动的完整处理：观察器 + 首次扫描 + 广告 + 连播 + 补扫。
  * 自动连播监听在此之后才初始化，因此启动阶段无需改动 flagSkipBlockedAutoplay 配置。
+ * 幂等：正常路径与“顶栏未出现”的兜底路径只会真正启动一次（否则会重复注册观察器与定时器）。
  */
 function startVideoPageProcessing() {
-  initializeObserver("right-container"); // 观察右侧推荐区域（等容器挂载，避免观察整页）
+  if (videoPageProcessingStarted) return;
+  videoPageProcessingStarted = true;
+  // 观察右侧推荐区域（等容器挂载，避免观察整页）：
+  // 老版布局是 id="right-container"，新版是 class="right-container"，
+  // 只写裸字符串 "right-container" 会先被 getElementById 当 id 查、再被 querySelector 当标签名查，
+  // 两者都不命中 → 观察器永远挂不上（还会每 2.5s 重连刷屏）。这里两种写法都列上。
+  initializeObserver("#right-container, .right-container");
   // 首次主动扫描 + 广告判定：header 已稳定，此时对卡片/广告做 DOM 操作不会再顶掉 header。
   // 广告与卡片在同一批提交：判定完成后 resolveVideoPageAds() 内部会解除预覆盖。
   scanAndBlockVideoCards();
@@ -264,14 +309,10 @@ let urlChangeWatcherInstalled = false;
  * @returns {string}
  */
 function getVideoSwitchKey() {
-  if (typeof getBvFromUrl === "function") {
-    const bvFromUrl = getBvFromUrl();
-    if (bvFromUrl) return bvFromUrl;
-  }
-  if (typeof getCurrentBv === "function") {
-    return getCurrentBv() || "";
-  }
-  return "";
+  // getBvFromUrl / getCurrentBv 都在 autoplay.js 里以函数声明定义，同一 IIFE 内已提升，直接调用
+  const bvFromUrl = getBvFromUrl();
+  if (bvFromUrl) return bvFromUrl;
+  return getCurrentBv() || "";
 }
 
 /**

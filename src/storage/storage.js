@@ -4,7 +4,7 @@
  * 黑名单与全局配置的加载 / 保存（基于 GM_getValue / GM_setValue）。
  */
 // 从存储中获取黑名单
-// 默认精确匹配黑名单（区分大小写）
+// 默认精确匹配黑名单（匹配时忽略大小写，见 core.js 的 getExactBlacklistMatch）
 let exactMatchBlacklist = GM_getValue("exactBlacklist", [
   "绝区零",
   "崩坏星穹铁道",
@@ -148,7 +148,7 @@ let tagListLastTime = GM_getValue("tLastTime", 0);
 // feed（popular/ranking）增量更新分区表的独立 12h 节流时间戳，与 channelKv 更新分开。
 let tagFeedLastTime = GM_getValue("tFeedLastTime", 0);
 // 将标签名列表保存到存储中（同时刷新 channelKv 的 tLastTime 计时）
-function saveTagNameListToStorage() {
+function saveTagNameListWithTimestamp() {
   GM_setValue("tagNameList", tagNameList);
   GM_setValue("tLastTime", Date.now());
 }

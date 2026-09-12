@@ -69,20 +69,6 @@ GM_addStyle(`
 `);
 
 /**
- * 判断元素是否为播放页广告位。
- * @param {HTMLElement} element - 待判断元素。
- * @returns {boolean}
- */
-function isVideoAdElement(element) {
-  return !!(
-    element &&
-    element.nodeType === 1 &&
-    typeof element.matches === "function" &&
-    element.matches(VIDEO_AD_SELECTOR_TEXT)
-  );
-}
-
-/**
  * 为播放页广告元素创建屏蔽信息容器（独立于视频卡片的实现）。
  *
  * 与卡片用的 getBlockContainerHost() 的区别：
@@ -233,13 +219,6 @@ function blockMainPageAds() {
   document.querySelectorAll(MAIN_AD_SELECTOR_TEXT).forEach((adCard) => {
     hideVideoCard(adCard, "ad"); // 隐藏广告卡片
   });
-}
-
-/**
- * 屏蔽视频播放页上的广告（兼容旧调用名，转调判定提交流程）。
- */
-function blockVideoPageAds() {
-  resolveVideoPageAds();
 }
 
 // 求值期立即预覆盖：比放进 initializeScript() 更早，少一段广告裸露窗口。

@@ -16,8 +16,7 @@
 
 // 内部运行状态
 let autoplayWatchTimer = null; // 轮询定时器
-let lastSignature = ""; // 上一次检测到的“当前播放视频”特征（UP名 + 标题 + BV）
-let lastHandledBv = ""; // 上一次已经处理过的目标 BV，避免重复处理
+let lastSignature = ""; // 上一次检测到的“当前播放视频”特征（UP名 + 标题 + BV + 分P）
 let isHandling = false; // 防止多次处理并发
 
 // 当前播放视频的标题选择器（B站标题通常为 h1）
@@ -84,11 +83,12 @@ function getCurrentBv() {
 }
 
 /**
- * 取当前播放视频的分P/CID：优先播放器，其次 URL 的 p 参数。
+ * 取当前播放视频的位置标识（不是纯 CID）：优先播放器 CID，其次 URL 的 p 参数，
+ * 最后退回分P标题；仅用于生成“是否换集/换视频”的特征串。
  * 多P视频切换分P时 BV/标题/UP 均不变，必须用分P信息才能感知切换。
  * @returns {string}
  */
-function getCurrentCid() {
+function getVideoPositionKey() {
   const p = window.player;
   if (p) {
     const tries = [
@@ -604,7 +604,6 @@ async function handleBlockedVideo(info, bv) {
   // mode === "skip"
   const nextBv = await getFirstNonBlockedBv(bv);
   if (nextBv && nextBv !== bv) {
-    lastHandledBv = nextBv; // 记录目标，避免反复处理
     if (tryInPageSwitch(nextBv)) {
       return;
     }
@@ -627,6 +626,10 @@ function initAutoplaySkip() {
   if (autoplayWatchTimer) return; // 防止重复初始化
 
   const check = async () => {
+    // 页面在后台：不值得每 700ms 做一整套 DOM 探测。
+    // 与队列的 isPageCurrentlyActive 一致 —— 后台不做判定，避免多开页面并发请求
+    // （自动连播判断会打 view / archive/related 接口）触发限流；切回前台由 visibilitychange 立即补一次。
+    if (document.hidden) return;
     const bv = getCurrentBv();
     if (!bv) {
       // 不在视频播放页，重置基准
@@ -634,7 +637,7 @@ function initAutoplaySkip() {
       return;
     }
     const info = getPlayingVideoInfo();
-    const cid = getCurrentCid();
+    const cid = getVideoPositionKey();
     const signature = `${info.upName}||${info.title}||${bv}||${cid}`;
     if (signature === lastSignature) return; // 视频没变
 
@@ -653,6 +656,10 @@ function initAutoplaySkip() {
 
   autoplayWatchTimer = setInterval(check, 700);
   window.addEventListener("popstate", check);
+  // 从后台切回前台：立即补一次检测（后台期间 check 直接返回，不消耗 DOM 探测）
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) check();
+  });
   // 捕获阶段监听播放事件（video 事件不冒泡，用 capture 才能捕捉），
   // 切集开始播放新视频时会触发一次检测，比轮询更快、更稳。
   const onPlayback = () => check();

@@ -8,7 +8,7 @@
 const TNAME_LIST_UPDATE_INTERVAL = 12 * 60 * 60 * 1000; // 12 小时
 
 // 从Video page 获取 本地资源
-function getTNameListFormVideoPage() {
+function getTNameListFromVideoPage() {
   try {
     var channelKv = unsafeWindow.__INITIAL_STATE__.channelKv;
     if (!channelKv) return [];
@@ -57,9 +57,10 @@ function mergeTNameListItems(newList) {
     const name = item.name;
     const name_v2 = item.name_v2;
     if (!existingMap.has(id)) {
-      // 新增条目
-      tagNameList.push({ id: item.id, name, name_v2 });
-      existingMap.set(id, { id: item.id, name, name_v2 });
+      // 新增条目（同一对象同时入数组与索引表，避免重复 id 时只更新到索引表那份）
+      const record = { id: item.id, name, name_v2 };
+      tagNameList.push(record);
+      existingMap.set(id, record);
       updated++;
     } else {
       // 已存在，检查名称是否一致，若不一致则更新
@@ -85,7 +86,7 @@ function updateTNameList() {
     return;
   }
 
-  const newList = getTNameListFormVideoPage();
+  const newList = getTNameListFromVideoPage();
   if (newList.length === 0) {
     console.warn('[🫥BlackList] 未能获取到新的标签名列表。');
     return;
@@ -96,7 +97,7 @@ function updateTNameList() {
   const updated = mergeTNameListItems(newList);
 
   if (updated) {
-    saveTagNameListToStorage();
+    saveTagNameListWithTimestamp();
     tagListLastTime = now; // 更新局部变量以保持同步
     console.log('[🫥BlackList] 分区表已更新（新增/变更 ' + updated + ' 条）并保存。');
   } else {

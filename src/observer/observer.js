@@ -12,6 +12,7 @@
  */
 // 页面切到后台（document.hidden）时暂停队列处理，切回后恢复。
 // isPageCurrentlyActive 由 video-data.js 声明；这里只负责随 visibilitychange 更新它。
+// 【有意设计，勿改】后台暂停是为了避免多开页面并发请求 API 触发限流，理由见 video-data.js 的说明。
 document.addEventListener("visibilitychange", () => {
   isPageCurrentlyActive = !document.hidden;
 });
@@ -24,6 +25,13 @@ let videoHeaderReady = false;
 let observedRoot = null; // 当前实际 observe 的根节点（切视频后可能被整体替换）
 let observedTarget = ""; // 对应的容器 id/选择器，供断连后重连使用
 let headerButtonScheduled = false; // 顶栏管理按钮兜底重挂的合并调度标志
+// 等待容器“首次出现”的最长时间，与 waitForContainer 的默认超时保持一致。
+const OBSERVER_CONTAINER_WAIT_MS = 15000;
+// 最近一次“等待容器出现”的起始时间（0 = 无等待中）。
+// 用于让 ensureObserverAttached() 在容器还没出现时**不要**反复重建观察器：
+// 视频页实测（2026-09）每 2.5s 重建一次，会每轮新建一个 waitForContainer 轮询器
+// （最多约 6 个并存），并把控制台刷满“观察根节点已失效 / 容器尚未挂载”。
+let observerWaitStartedAt = 0;
 
 // 插件自己插入的 DOM：卡比遮罩、屏蔽容器（内含屏蔽按钮 / 屏蔽原因 / 分类与视频标签组）、
 // 顶栏管理按钮与管理面板。观察器必须忽略它们 —— 否则这些节点会被 closest() 反查成“卡片”，
@@ -158,6 +166,10 @@ function resetSeenCards() {
 
 /**
  * 在指定容器上初始化MutationObserver。
+ *
+ * 解析顺序是“先按 id、再按 CSS 选择器”，因此既兼容老的纯 id 写法（"app" /
+ * "i_cecream" / "feedchannel-main"），也支持选择器或选择器列表
+ * （视频页现在传 "#right-container, .right-container"：老版是 id，新版是 class）。
  * @param {string} containerIdOrSelector - 要观察的容器的ID或CSS选择器。
  */
 function initializeObserver(containerIdOrSelector) {
@@ -168,6 +180,7 @@ function initializeObserver(containerIdOrSelector) {
 
   if (rootNode) {
     observedRoot = rootNode;
+    observerWaitStartedAt = 0;
     contentObserver.observe(rootNode, {
       childList: true,
       subtree: true,
@@ -186,18 +199,26 @@ function initializeObserver(containerIdOrSelector) {
       "[🫥BlackList] 观察容器尚未挂载，等待其出现后再观察（避免回退整页干扰 header）:",
       containerIdOrSelector
     );
-    waitForContainer(containerIdOrSelector, (el) => {
-      observedRoot = el;
-      contentObserver.observe(el, {
-        childList: true,
-        subtree: true,
-      });
-    });
+    observerWaitStartedAt = Date.now();
+    waitForContainer(
+      containerIdOrSelector,
+      (el) => {
+        observerWaitStartedAt = 0;
+        observedRoot = el;
+        contentObserver.observe(el, {
+          childList: true,
+          subtree: true,
+        });
+      },
+      250,
+      OBSERVER_CONTAINER_WAIT_MS
+    );
     return;
   }
 
   // 非视频页：回退观察整篇文档，避免漏掉动态插入的新卡片。
   observedRoot = document.documentElement;
+  observerWaitStartedAt = 0;
   contentObserver.observe(document.documentElement, {
     childList: true,
     subtree: true,
@@ -207,16 +228,28 @@ function initializeObserver(containerIdOrSelector) {
 /**
  * 检查观察根节点是否仍在文档中；若已被整体替换（页面内切视频常见），则重新绑定观察器。
  *
- * 播放页 observe 的是 #right-container 这个具体节点，B 站切视频若把它整个换掉，
- * 观察器就会绑在游离节点上，此后新卡片/新广告都不再触发回调。
+ * 播放页 observe 的是右侧推荐容器（老版 `#right-container`、新版 `.right-container`），
+ * B 站切视频若把它整个换掉，观察器就会绑在游离节点上，此后新卡片/新广告都不再触发回调。
+ *
+ * 注意区分两种“没有根节点”：
+ *   - 曾绑定过、现在失效 → 需要重连；
+ *   - 容器还没首次出现（waitForContainer 仍在等） → 什么都不做，否则每次调用都会
+ *     disconnect + 重新等待，实测会每 2.5s 新建一个轮询器并刷屏。
  * @returns {boolean} 是否执行了重连。
  */
 function ensureObserverAttached() {
   if (!observedTarget) return false;
   if (observedRoot && observedRoot.isConnected) return false;
+  if (
+    !observedRoot &&
+    Date.now() - observerWaitStartedAt < OBSERVER_CONTAINER_WAIT_MS
+  ) {
+    return false; // 首次等待尚未超时
+  }
   console.log("[🫥BlackList] 观察根节点已失效，重新绑定观察器:", observedTarget);
   contentObserver.disconnect();
   observedRoot = null;
+  observerWaitStartedAt = 0;
   initializeObserver(observedTarget);
   return true;
 }
