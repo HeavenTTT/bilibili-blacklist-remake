@@ -39,6 +39,8 @@ function initializeScript() {
   } else if (isCurrentPageRanking()) {
     initializeRankingPage();
     blockMainPageAds();
+  } else if (isCurrentPageDynamic()) {
+    initializeDynamicPage();
   } else if (isCurrentUserSpace()) {
     initializeUserSpace();
   } else {
@@ -47,6 +49,7 @@ function initializeScript() {
   createBlacklistPanel(); // 创建管理面板
   addBlacklistManagerButton(); // 立即挂载管理按钮，避免在视频页被迟到的顶栏渲染顶掉前不可见；后续由观察器兜底
   initTampermonkeyMenu(); // 注册油猴菜单（顶部按钮开关 / 打开管理面板）
+  startBlockStatsFlusher(); // 屏蔽统计：定时把本页增量按天落盘（面板显示今日/近7天/累计）
   // 网络拦截：命中黑名单的推荐/相关条目直接在响应层过滤
   if (globalPluginConfig.flagNetworkIntercept) {
     installNetworkInterceptors();
@@ -64,9 +67,13 @@ document.addEventListener("DOMContentLoaded", initializeScript);
 
 /**
  * 检查当前页面是否为Bilibili主页。
+ *
+ * 必须同时校验 hostname：`t.bilibili.com/`（动态首页）的 pathname 也是 "/"，
+ * 只看 pathname 会把它误判成主页（用过主页的选择器去扫动态，一张卡都命中不到）。
  * @returns {boolean} 如果是主页则返回true，否则返回false。
  */
 function isCurrentPageMain() {
+  if (location.hostname !== "www.bilibili.com") return false;
   return location.pathname === "/" || location.pathname === "/index.html";
 }
 
@@ -80,6 +87,29 @@ function initializeMainPage() {
     scanAndBlockVideoCards();
   }, 800);
   console.log("[🫥BlackList] 主页已加载🍓");
+}
+
+/**
+ * 检查当前页面是否为Bilibili动态页（t.bilibili.com）。
+ * @returns {boolean} 如果是动态页则返回true，否则返回false。
+ */
+function isCurrentPageDynamic() {
+  return location.hostname === "t.bilibili.com";
+}
+
+/**
+ * 初始化动态页特有的功能。
+ *
+ * 动态页的"卡片"是整条动态（`.bili-dyn-list__item`，含转发/图文/视频投稿），
+ * 屏蔽单位也按整条动态算；发布者取 `.bili-dyn-title__text`，视频标题取
+ * `.bili-dyn-card-video__title`（见 core.js 的 getVideoCardInfo）。
+ */
+function initializeDynamicPage() {
+  initializeObserver(".bili-dyn-list"); // 观察动态列表（找不到会回退观察整页）
+  setTimeout(() => {
+    scanAndBlockVideoCards();
+  }, 800);
+  console.log("[🫥BlackList] 动态页已加载📰");
 }
 
 /**

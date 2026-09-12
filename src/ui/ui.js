@@ -227,7 +227,9 @@ function initTampermonkeyMenu() {
 /**
  * 面板头部「统计明细」的行定义（单一真源：创建时按此生成 DOM，刷新时按 key 只更新数值）。
  * 第一组是屏蔽原因明细（与 h3 的总数口径一致）；第二组是网络与请求统计
- * （网络拦截条数/响应次数，以及真实发出的接口请求次数 —— 便于对照是否触发限流）。
+ * （网络拦截条数/响应次数，以及真实发出的接口请求次数 —— 便于对照是否触发限流）；
+ * 第三组是**按天持久化**的累计与趋势（存储值 + 本页尚未刷盘的增量，见 core/stats.js）。
+ * getText 会收到一个 ctx（含 summary / series），避免同一轮刷新里重复汇总。
  */
 const BLOCK_STATS_GROUPS = [
   {
@@ -245,10 +247,47 @@ const BLOCK_STATS_GROUPS = [
     title: "网络与请求",
     rows: [
       { key: "netItems", label: "网络拦截", getText: () => `${countNetworkInterceptItems} 条` },
+      { key: "netAds", label: "其中广告", getText: () => `${countNetworkInterceptAds} 条` },
       { key: "netResponses", label: "拦截响应", getText: () => `${countNetworkInterceptResponses} 次` },
       { key: "processed", label: "已判定卡片", getText: () => String(countProcessedCards) },
       { key: "apiView", label: "view 请求", getText: () => String(countApiViewRequests) },
       { key: "apiTag", label: "标签请求", getText: () => String(countApiTagRequests) },
+    ],
+  },
+  {
+    title: "累计与趋势（按天持久化）",
+    withTrend: true,
+    rows: [
+      {
+        key: "todayBlocks",
+        label: "今日屏蔽",
+        getText: (ctx) => String(sumBlockStatsBlocked(ctx.summary.today)),
+      },
+      {
+        key: "last7Blocks",
+        label: "近 7 天屏蔽",
+        getText: (ctx) => String(sumBlockStatsBlocked(ctx.summary.last7)),
+      },
+      {
+        key: "totalBlocks",
+        label: "累计屏蔽",
+        getText: (ctx) => String(sumBlockStatsBlocked(ctx.summary.total)),
+      },
+      {
+        key: "todayNet",
+        label: "今日拦截",
+        getText: (ctx) => `${ctx.summary.today.netItems} 条`,
+      },
+      {
+        key: "last7Net",
+        label: "近 7 天拦截",
+        getText: (ctx) => `${ctx.summary.last7.netItems} 条`,
+      },
+      {
+        key: "totalProcessed",
+        label: "累计判定",
+        getText: (ctx) => String(ctx.summary.total.processed),
+      },
     ],
   },
 ];
@@ -270,15 +309,35 @@ function refreshBlockCountDisplay() {
     blockCountTitleElement.textContent = `已屏蔽视频 ${blockedVideoCards.size}`;
   }
   if (!blockStatsValueElements) return;
-  // 明细收起时不写这 11 个数值（refreshBlockCountDisplay 是高频调用）；
+  // 明细收起时不写这些数值（refreshBlockCountDisplay 是高频调用，且汇总要走存储）；
   // 展开按钮的点击处理会立刻补一次刷新。
   if (!isBlockStatsExpanded) return;
+  const ctx = {
+    summary: getBlockStatsSummary(),
+    series: getBlockStatsDailySeries(7),
+  };
   BLOCK_STATS_GROUPS.forEach((group) => {
     group.rows.forEach((row) => {
       const valueElement = blockStatsValueElements.get(row.key);
-      if (valueElement) valueElement.textContent = row.getText();
+      if (valueElement) valueElement.textContent = row.getText(ctx);
     });
   });
+  // 7 日趋势柱：高度按当周最大值归一，为 0 的日子画一条浅色底线
+  if (blockTrendBarElements && ctx.series) {
+    const maxBlocks = Math.max(
+      1,
+      ctx.series.reduce((m, d) => Math.max(m, d.blocks), 0)
+    );
+    ctx.series.forEach((day, index) => {
+      const bar = blockTrendBarElements[index];
+      if (!bar) return;
+      bar.style.height =
+        (day.blocks === 0 ? 2 : Math.max(3, Math.round((day.blocks / maxBlocks) * 26))) +
+        "px";
+      bar.style.backgroundColor = day.blocks === 0 ? "#e3e5e8" : "#fb7299";
+      bar.title = `${day.key.slice(5)}：屏蔽 ${day.blocks} 条（网络拦截 ${day.intercepted} 条）`;
+    });
+  }
 }
 
 // 辅助函数：创建通用按钮
@@ -697,6 +756,31 @@ function refreshConfigSettings() {
   tagNameListControlContainer.appendChild(clearTagNameListButton);
   configListElement.appendChild(tagNameListControlContainer);
 
+  // 累计屏蔽统计（面板头部「累计与趋势」那组的数据）显示与清除
+  const blockStatsControlContainer = document.createElement("div");
+  blockStatsControlContainer.className =
+    "bilibili-blacklist-panel-row bilibili-blacklist-cache-control";
+  blockStatsControlContainer.title =
+    "按天累计的屏蔽/拦截统计（面板头部明细里的「累计与趋势」）";
+  const blockStatsLabel = document.createElement("span");
+  const blockStatsTotal = sumBlockStatsBlocked(getBlockStatsSummary().total);
+  blockStatsLabel.textContent = `累计屏蔽统计: ${blockStatsTotal}`;
+  const clearBlockStatsButton = document.createElement("button");
+  clearBlockStatsButton.className =
+    "bilibili-blacklist-config-btn bilibili-blacklist-config-btn-danger";
+  clearBlockStatsButton.textContent = "清除";
+  clearBlockStatsButton.addEventListener("click", () => {
+    if (!confirm("确定要清除累计屏蔽统计吗？（面板头部的今日/近7天/累计与趋势会归零）")) {
+      return;
+    }
+    clearBlockStats();
+    blockStatsLabel.textContent = "累计屏蔽统计: 0";
+    refreshBlockCountDisplay();
+  });
+  blockStatsControlContainer.appendChild(blockStatsLabel);
+  blockStatsControlContainer.appendChild(clearBlockStatsButton);
+  configListElement.appendChild(blockStatsControlContainer);
+
   // 自动连播遇到被屏蔽视频的处理方式
   configListElement.appendChild(
     createSettingSelect(
@@ -972,6 +1056,19 @@ function createBlacklistPanel() {
       statsContainer.appendChild(rowElement);
       blockStatsValueElements.set(row.key, valueElement);
     });
+    // 累计组的 7 日趋势柱（DOM 也只在建面板时创建一次）
+    if (group.withTrend) {
+      const trend = document.createElement("div");
+      trend.className = "bilibili-blacklist-trend";
+      blockTrendBarElements = [];
+      for (let i = 0; i < 7; i++) {
+        const bar = document.createElement("span");
+        bar.className = "bilibili-blacklist-trend-bar";
+        trend.appendChild(bar);
+        blockTrendBarElements.push(bar);
+      }
+      statsContainer.appendChild(trend);
+    }
   });
   titleWrap.appendChild(statsContainer);
   // 明细默认收起（展开状态由头部左侧的展开按钮切换，见下）
@@ -1501,6 +1598,25 @@ GM_addStyle(`
     color: var(--text2, #000);
   }
 
+  /* 7 日趋势柱：高度按当周最大值归一，0 值画一条浅色底线 */
+  .bilibili-blacklist-trend {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 30px;
+    margin-top: 6px;
+  }
+
+  .bilibili-blacklist-trend-bar {
+    flex: 1 1 0;
+    min-width: 6px;
+    height: 2px;
+    background-color: #e3e5e8;
+    border-radius: 2px 2px 0 0;
+    transition: height 0.2s, background-color 0.2s;
+  }
+
   /* 头部右侧操作按钮组：[展开/收起统计明细] [关闭面板] */
   .bilibili-blacklist-panel-actions {
     display: flex;
@@ -1969,9 +2085,13 @@ function addDisplayOverlayToCard(cardElement, mode) {
     svg.setAttribute("height", `${size}px`);
   }
 
+  // 遮罩宿主：分类页/动态页的"真实卡片"是内层元素（内层 .bili-video-card / .bili-dyn-card-video），
+  // 挂在外层会导致遮罩尺寸覆盖整条卡片（动态页还会盖住转发正文）。
   const hostElement = isCurrentPageCategory()
     ? cardElement.querySelector(".bili-video-card") || cardElement
-    : cardElement;
+    : isCurrentPageDynamic()
+      ? cardElement.querySelector(".bili-dyn-card-video") || cardElement
+      : cardElement;
 
   // 确保宿主元素有position属性以便子元素绝对定位
   const hostStyle = getComputedStyle(hostElement);

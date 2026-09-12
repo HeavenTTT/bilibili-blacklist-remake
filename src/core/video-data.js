@@ -27,6 +27,21 @@ function getCardHrefLink(cardElement) {
   return null;
 }
 
+/**
+ * 取卡片里的 BV。
+ *
+ * 优先"指向 /video/ 的链接"：动态页的卡片是整条动态，第一个 <a> 往往是头像或"更多"，
+ * 用 getCardHrefLink 会拿不到 BV（于是分类/视频标签判定整段跳过）。
+ * 注意不要改 getCardHrefLink 本身：checkLinkCM 依赖"第一个 <a>"来识别 cm.bilibili.com 软广。
+ * @param {HTMLElement} cardElement - 视频卡片元素。
+ * @returns {string|null} BV ID，未找到返回 null。
+ */
+function getCardVideoBvId(cardElement) {
+  const videoLink = cardElement.querySelector('a[href*="/video/"]');
+  if (videoLink) return getLinkBvId(videoLink.getAttribute("href"));
+  return getLinkBvId(getCardHrefLink(cardElement));
+}
+
 function checkLinkCM(link) {
   if (!link) return false;
   // 如果是cm.bilibili.com的链接，且启用了CM广告屏蔽，则隐藏卡片
@@ -491,7 +506,7 @@ async function processVideoCardQueue() {
       tnameDecorateQueue.delete(decorateCard);
       if (!decorateCard || decorateCard.isConnected === false) continue;
       if (decorateCard.querySelector(".bilibili-blacklist-tname-group")) continue;
-      const decorateBvId = getLinkBvId(getCardHrefLink(decorateCard));
+      const decorateBvId = getCardVideoBvId(decorateCard);
       if (!decorateBvId) continue;
       const decorateResult = await attachTNameGroupToCard(
         decorateCard,
@@ -527,8 +542,8 @@ async function processVideoCardQueue() {
     let blockReasonValue = null; // 具体屏蔽内容（UP 名 / 标签名 / REGEX_BLOCK_VALUE）
 
     // ===== 阶段 A：零网络判定（软广链接 > UP主名精确 > 正则）=====
-    const link = getCardHrefLink(card);
-    const bvId = getLinkBvId(link);
+    const link = getCardHrefLink(card); // 软广判定仍用"第一个 <a>"（cm.bilibili.com 靠它）
+    const bvId = getCardVideoBvId(card); // BV 单独取：优先 /video/ 链接（动态页必需）
     if (checkLinkCM(link)) {
       shouldHide = true;
       blockType = "cm";

@@ -17,6 +17,24 @@
 - **dev 构建自动化钩子**（仅 `--dev` 产物）：URL 带 `#bl-open-panel`（或 `?bl_open_panel=1`）时自动打开面板并跑一次自检 ——
   关闭按钮尺寸/底色/是否被遮挡（`elementFromPoint`）、程序化点击能否关闭、统计明细行是否齐全、展开按钮是否在关闭按钮左边且默认收起、顶栏按钮是否被压住；
   结论逐条打到 console，便于无头/自动化验收。另暴露 `window.__blacklistExpose.panel.open/close/toggle`。
+- **动态页（t.bilibili.com）支持**：以整条动态（`.bili-dyn-list__item`）为屏蔽单位，发布者取 `.bili-dyn-title__text`、
+  视频标题取 `.bili-dyn-card-video__title`，遮挡层/屏蔽按钮挂在 `.bili-dyn-card-video` 上；观察器与增量选择器同步加入该选择器。
+  **同时修掉一个既有 bug**：`isCurrentPageMain()` 只看 pathname，导致 `t.bilibili.com/` 被误判成主页（用主页选择器扫动态，一张卡都命中不到）
+  —— 现改为必须 `hostname === "www.bilibili.com"`。另新增 `getCardVideoBvId()`：BV 优先取 `a[href*="/video/"]`
+  （动态卡片的第一个 `<a>` 往往是头像/更多），软广判定仍沿用"第一个 `<a>`"以免回归。
+- **网络拦截补全规则类型 + 官方广告字段**：
+  - 流内改为统一判定 `getStreamBlockReason()`：UP 名精确/正则、**官方广告标记**（`business_info.is_ad_loc/res_id/creative_type`）、
+    以及**复用队列已缓存**的 view/tag 数据判分类标签、视频标签、竖屏；
+  - 实测结论（2026-09，dev 字段勘查）：首页 rcmd 条目**没有** `tid/tname/tname_v2`、`dimension`、视频标签，
+    所以这三类只能靠缓存复用，流内**绝不新增请求**；
+  - 日志改为带原因明细（如「推荐流已过滤 3 条（广告 1、UP/标题名 1、分类标签 1）」）；
+  - 统计新增「其中广告」行与 `countNetworkInterceptAds`。
+- **dev 构建新增字段/DOM 勘查钩子**：`#bl-probe-fields` 打印推荐/相关接口的真实字段（逐条摘要 + 字段分布），
+  `#bl-probe-dom` 打印当前页判定结果与卡片 DOM 结构（给新页面定选择器用）；两者都只打 console，release 产物不含。
+- **统计持久化 + 7 日趋势**：新增 `src/core/stats.js`，把内存计数器按天差值落盘（`blockStats`：最近 30 天明细 + all-time 汇总），
+  只在有变化时写（每 5s / 切后台 / 页面卸载前 / 打开面板时各尝试一次），"取消屏蔽"造成的负增量也能正确回退；
+  面板头部新增「累计与趋势（按天持久化）」组（今日/近 7 天/累计屏蔽、今日/近 7 天拦截、累计判定 + 7 日趋势柱），
+  插件配置页新增「累计屏蔽统计 + 清除」。
 
 ### 变更
 - **分类标签解析失败 → 放行**：分类标签/视频标签接口无返回或解析不出分区名时，卡片重排到队列末尾重试一次，再次失败按放行处理（不再误屏蔽）。

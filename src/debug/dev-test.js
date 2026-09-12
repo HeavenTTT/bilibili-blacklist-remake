@@ -138,7 +138,18 @@ if (typeof __DSH_DEV__ !== "undefined" && __DSH_DEV__) {
     }
 
     const rows = panel.querySelectorAll(".bilibili-blacklist-stat-row");
-    assert("统计明细 11 行", rows.length === 11, String(rows.length));
+    assert("统计明细 18 行", rows.length === 18, String(rows.length));
+    const statGroups = panel.querySelectorAll(".bilibili-blacklist-stats-group");
+    assert(
+      "统计分组 3 个（含累计与趋势）",
+      statGroups.length === 3,
+      Array.prototype.map.call(statGroups, (g) => g.textContent).join("|")
+    );
+    assert(
+      "趋势柱 7 根",
+      panel.querySelectorAll(".bilibili-blacklist-trend-bar").length === 7,
+      String(panel.querySelectorAll(".bilibili-blacklist-trend-bar").length)
+    );
 
     // 展开/收起按钮：默认收起、位于关闭按钮左边、点击能切换
     const stats = panel.querySelector(".bilibili-blacklist-stats");
@@ -175,7 +186,7 @@ if (typeof __DSH_DEV__ !== "undefined" && __DSH_DEV__) {
     assert(
       "统计项齐全",
       labels ===
-        "UP/标题名,广告,CM 软广,分类标签,视频标签,竖屏,网络拦截,拦截响应,已判定卡片,view 请求,标签请求",
+        "UP/标题名,广告,CM 软广,分类标签,视频标签,竖屏,网络拦截,其中广告,拦截响应,已判定卡片,view 请求,标签请求,今日屏蔽,近 7 天屏蔽,累计屏蔽,今日拦截,近 7 天拦截,累计判定",
       labels
     );
     const statText = Array.prototype.map
@@ -207,30 +218,146 @@ if (typeof __DSH_DEV__ !== "undefined" && __DSH_DEV__) {
   }
 
   /**
-   * 按 URL 标记自动打开管理面板并跑一次自检，便于无头/自动化验收（无需点顶栏按钮）。
-   * 用法：在地址栏加 #bl-open-panel（或 ?bl_open_panel=1）。
-   * 只在 dev 构建里生效，且只有带标记时才动手，不影响日常开发使用。
+   * DOM 结构勘查（dev 专用）：打印当前页被插件判成什么页面、各卡片选择器命中多少、
+   * 以及"动态页"相关的 class 统计与一张卡片的真实 outerHTML。
+   * 用途：给新页面（如 t.bilibili.com 动态页）确定选择器，而不是靠猜。
+   * @returns {string} 一行摘要。
    */
-  function __autoOpenPanelIfRequested() {
-    const params = new URLSearchParams(location.search);
-    const requested =
-      location.hash.indexOf("bl-open-panel") !== -1 ||
-      params.get("bl_open_panel") === "1";
-    if (!requested) return;
-    let tries = 0;
-    const timer = setInterval(() => {
-      tries++;
-      if (managerPanel) {
-        clearInterval(timer);
-        managerPanel.style.display = "flex";
-        console.log("[🫥BlackList][dev] 已按 URL 标记自动打开管理面板");
-        __panelSelfCheck().forEach((line) =>
-          console.log("[🫥BlackList][dev][自检] " + line)
-        );
-        return;
+  function __probeDom() {
+    const log = (line) => console.log("[🫥BlackList][probe-dom] " + line);
+    log("URL=" + location.href);
+    log(
+      "页面判定: isMain=" + isCurrentPageMain() +
+        " isSearch=" + isCurrentPageSearch() +
+        " isVideo=" + isCurrentPageVideo() +
+        " isCategory=" + isCurrentPageCategory() +
+        " isRanking=" + isCurrentPageRanking() +
+        " isUserSpace=" + isCurrentUserSpace()
+    );
+    const countOf = (sel) => {
+      try {
+        return document.querySelectorAll(sel).length;
+      } catch (e) {
+        return "ERR";
       }
-      if (tries > 40) clearInterval(timer); // 最多等 10s（面板在 initializeScript 里创建）
-    }, 250);
+    };
+    log(
+      "卡片选择器命中: .bili-video-card=" + countOf(".bili-video-card") +
+        " .video-page-card-small=" + countOf(".video-page-card-small") +
+        " .feed-card=" + countOf(".feed-card") +
+        " .bili-dyn-list__item=" + countOf(".bili-dyn-list__item") +
+        " .bili-dyn-card-video=" + countOf(".bili-dyn-card-video")
+    );
+    // 统计所有 bili-dyn* class（用于确定动态卡片根节点与首屏容器）
+    const classCount = {};
+    document.querySelectorAll('[class*="bili-dyn"]').forEach((el) => {
+      String(el.className || "")
+        .split(/\s+/)
+        .forEach((c) => {
+          if (c.indexOf("bili-dyn") === 0) classCount[c] = (classCount[c] || 0) + 1;
+        });
+    });
+    log("bili-dyn* class 统计: " + JSON.stringify(classCount));
+    const card =
+      document.querySelector(".bili-dyn-card-video") ||
+      document.querySelector(".bili-dyn-item") ||
+      document.querySelector('[class*="dyn-card"]');
+    if (card) {
+      log("卡片选中的元素: " + card.tagName + "." + card.className);
+      const struct = Array.prototype.slice
+        .call(card.querySelectorAll("*"), 0, 30)
+        .map(
+          (el) =>
+            el.tagName.toLowerCase() + "." + String(el.className || "").split(/\s+/)[0]
+        );
+      log("卡片子结构: " + struct.join(" | "));
+      [
+        ".bili-dyn-card-video__title",
+        ".bili-dyn-card-video__author",
+        ".bili-dyn-card-video__info",
+        ".bili-dyn-card-video__stat",
+        ".bili-dyn-card-video__desc",
+        ".bili-dyn-title__text",
+        ".bili-dyn-item__repost",
+        ".bili-dyn-content",
+        ".bili-dyn-content__orig",
+        ".bili-dyn-item__desc",
+        ".bili-dyn-card-video"
+      ].forEach((sel) => {
+        const el = document.querySelector(sel);
+        log(
+          (el ? "命中 " : "无 ") + sel +
+            (el ? " ×" + document.querySelectorAll(sel).length +
+                  " 文本=[" + String(el.textContent || "").trim().slice(0, 44) + "]" : "")
+        );
+      });
+      // 逐条列出前 3 个列表项的关键文本（区分"投稿了视频"与"转发"两种结构）
+      const items = document.querySelectorAll(".bili-dyn-list__item");
+      for (let i = 0; i < Math.min(items.length, 3); i++) {
+        const parts = [];
+        [
+          ".bili-dyn-title__text",
+          ".bili-dyn-item__desc",
+          ".bili-dyn-card-video__title",
+          ".bili-dyn-card-video__author",
+          ".bili-dyn-card-video__stat",
+          ".bili-dyn-item__repost"
+        ].forEach((sel) => {
+          const el = items[i].querySelector(sel);
+          if (el) {
+            parts.push(
+              sel.split("__").pop() + "=" + String(el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 36)
+            );
+          }
+        });
+        parts.push("href=" + ((items[i].querySelector("a.bili-dyn-card-video") || {}).getAttribute ? items[i].querySelector("a.bili-dyn-card-video").getAttribute("href") : "-"));
+        log("item[" + i + "]: " + parts.join(" ; "));
+      }
+    } else {
+      log("没有找到动态卡片元素（页面可能还没渲染完或不是动态页）");
+    }
+    return "probe-dom 已输出到 console";
+  }
+
+  /**
+   * 处理 URL 标记（dev 专用，只有带标记时才动手，不影响日常开发）：
+   *   - #bl-open-panel  ：面板置为展开态 + 自动打开 + 跑一次自检
+   *   - #bl-probe-fields：打开"推荐/相关接口响应字段勘查"，把真实返回字段打到 console
+   *   - #bl-probe-dom   ：打印当前页的页面判定与卡片 DOM 结构（给新页面定选择器）
+   * 标记可同时带上，例如 #bl-open-panel+bl-probe-fields。
+   */
+  function __applyUrlFlags() {
+    const params = new URLSearchParams(location.search);
+    const hash = location.hash || "";
+    if (
+      hash.indexOf("bl-probe-fields") !== -1 ||
+      params.get("bl_probe_fields") === "1"
+    ) {
+      setInterceptFieldProbe(true);
+      console.log(
+        "[🫥BlackList][dev] 已打开响应字段勘查：命中推荐/相关接口时会打印字段清单"
+      );
+    }
+    if (hash.indexOf("bl-probe-dom") !== -1 || params.get("bl_probe_dom") === "1") {
+      setTimeout(() => __probeDom(), 1500); // 等首屏渲染
+      setTimeout(() => __probeDom(), 4000);
+    }
+    if (hash.indexOf("bl-open-panel") !== -1 || params.get("bl_open_panel") === "1") {
+      let tries = 0;
+      const timer = setInterval(() => {
+        tries++;
+        if (managerPanel) {
+          clearInterval(timer);
+          managerPanel.style.display = "flex";
+          console.log("[🫥BlackList][dev] 已按 URL 标记自动打开管理面板");
+          __panelSelfCheck().forEach((line) =>
+            console.log("[🫥BlackList][dev][自检] " + line)
+          );
+          return;
+        }
+        if (tries > 40) clearInterval(timer); // 最多等 10s（面板在 initializeScript 里创建）
+      }, 250);
+    }
   }
 
   window.__blacklistConfig = globalPluginConfig;
@@ -252,8 +379,25 @@ if (typeof __DSH_DEV__ !== "undefined" && __DSH_DEV__) {
         apiViewRequests: countApiViewRequests,
         apiTagRequests: countApiTagRequests,
         networkInterceptItems: countNetworkInterceptItems,
+        networkInterceptAds: countNetworkInterceptAds,
         networkInterceptResponses: countNetworkInterceptResponses
       };
+    },
+    // 按天持久化统计（今日/近7天/累计 + 7 日序列）；flush/clear 便于自动化验证
+    blockStats: {
+      summary: function () {
+        return getBlockStatsSummary();
+      },
+      series: function (days) {
+        return getBlockStatsDailySeries(Number(days) > 0 ? Number(days) : 7);
+      },
+      flush: function () {
+        return flushBlockStats();
+      },
+      clear: function () {
+        clearBlockStats();
+        refreshBlockCountDisplay();
+      }
     },
     // 面板开关（自动化/调试用，省得去点顶栏那个按钮）
     panel: {
@@ -271,10 +415,19 @@ if (typeof __DSH_DEV__ !== "undefined" && __DSH_DEV__) {
     },
     testBlock100: function (n) {
       return __blockTestRun(Number(n) > 0 ? Number(n) : 100);
+    },
+    // 响应字段勘查开关（也可用 URL 标记 #bl-probe-fields 打开）
+    probeInterceptFields: function (on) {
+      setInterceptFieldProbe(on === undefined ? true : on);
+      return INTERCEPT_FIELD_PROBE;
+    },
+    // 直接看拦截器配置/命中的 URL 规则，便于确认页面实际调的是哪个推荐接口
+    interceptUrlPatterns: function () {
+      return NET_INTERCEPT.urlPatterns.slice();
     }
   };
 
-  __autoOpenPanelIfRequested();
+  __applyUrlFlags();
 
   console.log(
     "[🫥BlackList][dev] 已注入调试/测试入口：window.__blacklistConfig / " +

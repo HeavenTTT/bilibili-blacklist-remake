@@ -18,7 +18,9 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // 增量观察：只处理“新插入”的卡片，不做全量重扫
-const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
+// （.bili-dyn-list__item = 动态页的整条动态，屏蔽单位与它一致）
+const INCREMENTAL_CARD_SELECTOR =
+  ".bili-video-card, .video-page-card-small, .feed-card, .bili-dyn-list__item";
 let seenCards = new WeakSet();
 const seenAdElements = new WeakSet(); // 已被观察到的广告元素（仅用于判断“是否有新广告出现”）
 let videoHeaderReady = false;

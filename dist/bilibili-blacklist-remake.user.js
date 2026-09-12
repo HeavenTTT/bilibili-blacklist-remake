@@ -377,6 +377,7 @@ let configListElement;
 let blockCountTitleElement;
 let blockCountDisplayElement = null;
 let blockStatsValueElements = null;
+let blockTrendBarElements = null;
 let isBlockStatsExpanded = false;
 
 let isShowAllVideos = false;
@@ -398,6 +399,7 @@ let countProcessedCards = 0;
 let countApiViewRequests = 0;
 let countApiTagRequests = 0;
 let countNetworkInterceptItems = 0;
+let countNetworkInterceptAds = 0;
 let countNetworkInterceptResponses = 0;
 
 const pendingFilterCards = new WeakSet();
@@ -446,6 +448,16 @@ function getBlockContainerHost(cardElement) {
     if (biliVideoCard) {
       biliVideoCard.classList.add("bilibili-blacklist-block-container-host");
       return biliVideoCard;
+    }
+  } else if (isCurrentPageDynamic()) {
+    const dynCard = cardElement.querySelector(".bili-dyn-card-video");
+    if (dynCard) {
+      const dynStyle = getComputedStyle(dynCard);
+      if (dynStyle.position === "static" || !dynStyle.position) {
+        dynCard.style.position = "relative";
+      }
+      dynCard.classList.add("bilibili-blacklist-block-container-host");
+      return dynCard;
     }
   }
   const hostStyle = getComputedStyle(cardElement);
@@ -776,6 +788,8 @@ function queryAllVideoCards() {
     return document.querySelectorAll(".feed-card");
   } else if (isCurrentPageSearch()) {
     return document.querySelectorAll(".bili-video-card");
+  } else if (isCurrentPageDynamic()) {
+    return document.querySelectorAll(".bili-dyn-list__item");
   } else if (isCurrentPageRanking()) {
     return document.querySelectorAll(
       ".bili-video-card, .rank-item, .video-card, .rank-card"
@@ -886,6 +900,15 @@ function toggleShowAllBlockedVideos() {
 }
 
 function getVideoCardInfo(cardElement) {
+  if (isCurrentPageDynamic()) {
+    const dynNameElement = cardElement.querySelector(".bili-dyn-title__text");
+    const upName = dynNameElement ? dynNameElement.textContent.trim() : "";
+    let videoTitle = "";
+    const dynVideoTitle = cardElement.querySelector(".bili-dyn-card-video__title");
+    if (dynVideoTitle) videoTitle = dynVideoTitle.textContent.trim();
+    return { upName, videoTitle };
+  }
+
   let upName = "";
   let videoTitle = "";
 
@@ -1093,6 +1116,207 @@ function hideAllCardsByVideoTag(tagName) {
   });
 }
 
+const BLOCK_STATS_STORAGE_KEY = "blockStats";
+const BLOCK_STATS_KEEP_DAYS = 30;
+const BLOCK_STATS_FLUSH_INTERVAL_MS = 5000;
+const BLOCK_STATS_KEYS = [
+  "info",
+  "ad",
+  "cm",
+  "tname",
+  "videoTag",
+  "vertical",
+  "netItems",
+  "netAds",
+  "netResponses",
+  "processed",
+];
+
+let blockStatsStore = null;
+let blockStatsSnapshot = {
+  info: 0,
+  ad: 0,
+  cm: 0,
+  tname: 0,
+  videoTag: 0,
+  vertical: 0,
+  netItems: 0,
+  netAds: 0,
+  netResponses: 0,
+  processed: 0,
+};
+let blockStatsFlushTimer = null;
+
+function getBlockStatsDayKey(date) {
+  const d = date || new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function getRecentBlockStatsDayKeys(days) {
+  const out = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    out.push(
+      getBlockStatsDayKey(
+        new Date(today.getFullYear(), today.getMonth(), today.getDate() - i)
+      )
+    );
+  }
+  return out;
+}
+
+function readBlockStatsFromStorage() {
+  if (blockStatsStore) return blockStatsStore;
+  let stored = null;
+  try {
+    stored = GM_getValue(BLOCK_STATS_STORAGE_KEY, null);
+  } catch (e) {
+    stored = null;
+  }
+  blockStatsStore = {
+    days: (stored && typeof stored.days === "object" && stored.days) || {},
+    total: (stored && typeof stored.total === "object" && stored.total) || {},
+  };
+  return blockStatsStore;
+}
+
+function getCurrentBlockStatsValues() {
+  return {
+    info: countBlockInfo,
+    ad: countBlockAD,
+    cm: countBlockCM,
+    tname: countBlockTName,
+    videoTag: countBlockVideoTag,
+    vertical: countBlockVertical,
+    netItems: countNetworkInterceptItems,
+    netAds: countNetworkInterceptAds,
+    netResponses: countNetworkInterceptResponses,
+    processed: countProcessedCards,
+  };
+}
+
+function sumBlockStatsBlocked(bucket) {
+  if (!bucket) return 0;
+  return (
+    (bucket.info || 0) +
+    (bucket.ad || 0) +
+    (bucket.cm || 0) +
+    (bucket.tname || 0) +
+    (bucket.videoTag || 0) +
+    (bucket.vertical || 0)
+  );
+}
+
+function pruneBlockStatsDays(store) {
+  const keys = Object.keys(store.days).sort();
+  while (keys.length > BLOCK_STATS_KEEP_DAYS) {
+    delete store.days[keys.shift()];
+  }
+}
+
+function flushBlockStats() {
+  const store = readBlockStatsFromStorage();
+  const current = getCurrentBlockStatsValues();
+  const dayKey = getBlockStatsDayKey();
+  const dayBucket = store.days[dayKey] || (store.days[dayKey] = {});
+  let changed = false;
+  BLOCK_STATS_KEYS.forEach((key) => {
+    const delta = (current[key] || 0) - (blockStatsSnapshot[key] || 0);
+    if (!delta) return;
+    changed = true;
+    dayBucket[key] = (dayBucket[key] || 0) + delta;
+    store.total[key] = (store.total[key] || 0) + delta;
+  });
+  if (!changed) return false;
+  blockStatsSnapshot = current;
+  pruneBlockStatsDays(store);
+  try {
+    GM_setValue(BLOCK_STATS_STORAGE_KEY, store);
+  } catch (e) {
+    console.error("[🫥BlackList] 统计落盘失败:", e);
+  }
+  return true;
+}
+
+function getBlockStatsSummary() {
+  flushBlockStats();
+  const store = readBlockStatsFromStorage();
+  const current = getCurrentBlockStatsValues();
+  const pending = {};
+  BLOCK_STATS_KEYS.forEach((key) => {
+    pending[key] = (current[key] || 0) - (blockStatsSnapshot[key] || 0);
+  });
+  const bucket = (src) => {
+    const out = {};
+    BLOCK_STATS_KEYS.forEach((key) => {
+      out[key] = (src && src[key]) || 0;
+    });
+    return out;
+  };
+  const todayKey = getBlockStatsDayKey();
+  const today = bucket(store.days[todayKey]);
+  BLOCK_STATS_KEYS.forEach((key) => {
+    today[key] += pending[key];
+  });
+  const last7Keys = getRecentBlockStatsDayKeys(7);
+  const last7 = bucket(null);
+  last7Keys.forEach((key) => {
+    const dayBucket = store.days[key] || {};
+    BLOCK_STATS_KEYS.forEach((k) => {
+      last7[k] += dayBucket[k] || 0;
+    });
+  });
+  const total = bucket(store.total);
+  return { today, last7, total };
+}
+
+function getBlockStatsDailySeries(days) {
+  const store = readBlockStatsFromStorage();
+  const todayKey = getBlockStatsDayKey();
+  const now = getCurrentBlockStatsValues();
+  return getRecentBlockStatsDayKeys(days).map((key) => {
+    const dayBucket = store.days[key] || {};
+    const isToday = key === todayKey;
+    const value = (k) =>
+      (dayBucket[k] || 0) + (isToday ? (now[k] || 0) - (blockStatsSnapshot[k] || 0) : 0);
+    return {
+      key: key,
+      blocks:
+        value("info") +
+        value("ad") +
+        value("cm") +
+        value("tname") +
+        value("videoTag") +
+        value("vertical"),
+      intercepted: value("netItems"),
+    };
+  });
+}
+
+function clearBlockStats() {
+  flushBlockStats();
+  blockStatsStore = { days: {}, total: {} };
+  blockStatsSnapshot = getCurrentBlockStatsValues();
+  try {
+    GM_setValue(BLOCK_STATS_STORAGE_KEY, blockStatsStore);
+  } catch (e) {
+    console.error("[🫥BlackList] 清除统计失败:", e);
+  }
+}
+
+function startBlockStatsFlusher() {
+  if (blockStatsFlushTimer) return;
+  blockStatsFlushTimer = setInterval(() => {
+    flushBlockStats();
+  }, BLOCK_STATS_FLUSH_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) flushBlockStats();
+  });
+  window.addEventListener("pagehide", () => flushBlockStats());
+  window.addEventListener("beforeunload", () => flushBlockStats());
+}
+
 let tnameRetriedCards = new WeakSet();
 let videoTagRetriedCards = new WeakSet();
 let isPageCurrentlyActive = true;
@@ -1102,6 +1326,12 @@ function getCardHrefLink(cardElement) {
     return hrefLink.getAttribute("href");
   }
   return null;
+}
+
+function getCardVideoBvId(cardElement) {
+  const videoLink = cardElement.querySelector('a[href*="/video/"]');
+  if (videoLink) return getLinkBvId(videoLink.getAttribute("href"));
+  return getLinkBvId(getCardHrefLink(cardElement));
 }
 
 function checkLinkCM(link) {
@@ -1463,7 +1693,7 @@ async function processVideoCardQueue() {
       tnameDecorateQueue.delete(decorateCard);
       if (!decorateCard || decorateCard.isConnected === false) continue;
       if (decorateCard.querySelector(".bilibili-blacklist-tname-group")) continue;
-      const decorateBvId = getLinkBvId(getCardHrefLink(decorateCard));
+      const decorateBvId = getCardVideoBvId(decorateCard);
       if (!decorateBvId) continue;
       const decorateResult = await attachTNameGroupToCard(
         decorateCard,
@@ -1493,7 +1723,7 @@ async function processVideoCardQueue() {
     let blockReasonValue = null;
 
     const link = getCardHrefLink(card);
-    const bvId = getLinkBvId(link);
+    const bvId = getCardVideoBvId(card);
     if (checkLinkCM(link)) {
       shouldHide = true;
       blockType = "cm";
@@ -1880,10 +2110,47 @@ const BLOCK_STATS_GROUPS = [
     title: "网络与请求",
     rows: [
       { key: "netItems", label: "网络拦截", getText: () => `${countNetworkInterceptItems} 条` },
+      { key: "netAds", label: "其中广告", getText: () => `${countNetworkInterceptAds} 条` },
       { key: "netResponses", label: "拦截响应", getText: () => `${countNetworkInterceptResponses} 次` },
       { key: "processed", label: "已判定卡片", getText: () => String(countProcessedCards) },
       { key: "apiView", label: "view 请求", getText: () => String(countApiViewRequests) },
       { key: "apiTag", label: "标签请求", getText: () => String(countApiTagRequests) },
+    ],
+  },
+  {
+    title: "累计与趋势（按天持久化）",
+    withTrend: true,
+    rows: [
+      {
+        key: "todayBlocks",
+        label: "今日屏蔽",
+        getText: (ctx) => String(sumBlockStatsBlocked(ctx.summary.today)),
+      },
+      {
+        key: "last7Blocks",
+        label: "近 7 天屏蔽",
+        getText: (ctx) => String(sumBlockStatsBlocked(ctx.summary.last7)),
+      },
+      {
+        key: "totalBlocks",
+        label: "累计屏蔽",
+        getText: (ctx) => String(sumBlockStatsBlocked(ctx.summary.total)),
+      },
+      {
+        key: "todayNet",
+        label: "今日拦截",
+        getText: (ctx) => `${ctx.summary.today.netItems} 条`,
+      },
+      {
+        key: "last7Net",
+        label: "近 7 天拦截",
+        getText: (ctx) => `${ctx.summary.last7.netItems} 条`,
+      },
+      {
+        key: "totalProcessed",
+        label: "累计判定",
+        getText: (ctx) => String(ctx.summary.total.processed),
+      },
     ],
   },
 ];
@@ -1899,12 +2166,31 @@ function refreshBlockCountDisplay() {
   }
   if (!blockStatsValueElements) return;
   if (!isBlockStatsExpanded) return;
+  const ctx = {
+    summary: getBlockStatsSummary(),
+    series: getBlockStatsDailySeries(7),
+  };
   BLOCK_STATS_GROUPS.forEach((group) => {
     group.rows.forEach((row) => {
       const valueElement = blockStatsValueElements.get(row.key);
-      if (valueElement) valueElement.textContent = row.getText();
+      if (valueElement) valueElement.textContent = row.getText(ctx);
     });
   });
+  if (blockTrendBarElements && ctx.series) {
+    const maxBlocks = Math.max(
+      1,
+      ctx.series.reduce((m, d) => Math.max(m, d.blocks), 0)
+    );
+    ctx.series.forEach((day, index) => {
+      const bar = blockTrendBarElements[index];
+      if (!bar) return;
+      bar.style.height =
+        (day.blocks === 0 ? 2 : Math.max(3, Math.round((day.blocks / maxBlocks) * 26))) +
+        "px";
+      bar.style.backgroundColor = day.blocks === 0 ? "#e3e5e8" : "#fb7299";
+      bar.title = `${day.key.slice(5)}：屏蔽 ${day.blocks} 条（网络拦截 ${day.intercepted} 条）`;
+    });
+  }
 }
 
 function createPanelButton(text, bgColor, onClick) {
@@ -2269,6 +2555,30 @@ function refreshConfigSettings() {
   tagNameListControlContainer.appendChild(clearTagNameListButton);
   configListElement.appendChild(tagNameListControlContainer);
 
+  const blockStatsControlContainer = document.createElement("div");
+  blockStatsControlContainer.className =
+    "bilibili-blacklist-panel-row bilibili-blacklist-cache-control";
+  blockStatsControlContainer.title =
+    "按天累计的屏蔽/拦截统计（面板头部明细里的「累计与趋势」）";
+  const blockStatsLabel = document.createElement("span");
+  const blockStatsTotal = sumBlockStatsBlocked(getBlockStatsSummary().total);
+  blockStatsLabel.textContent = `累计屏蔽统计: ${blockStatsTotal}`;
+  const clearBlockStatsButton = document.createElement("button");
+  clearBlockStatsButton.className =
+    "bilibili-blacklist-config-btn bilibili-blacklist-config-btn-danger";
+  clearBlockStatsButton.textContent = "清除";
+  clearBlockStatsButton.addEventListener("click", () => {
+    if (!confirm("确定要清除累计屏蔽统计吗？（面板头部的今日/近7天/累计与趋势会归零）")) {
+      return;
+    }
+    clearBlockStats();
+    blockStatsLabel.textContent = "累计屏蔽统计: 0";
+    refreshBlockCountDisplay();
+  });
+  blockStatsControlContainer.appendChild(blockStatsLabel);
+  blockStatsControlContainer.appendChild(clearBlockStatsButton);
+  configListElement.appendChild(blockStatsControlContainer);
+
   configListElement.appendChild(
     createSettingSelect(
       "自动连播遇到被屏蔽视频:",
@@ -2520,6 +2830,18 @@ function createBlacklistPanel() {
       statsContainer.appendChild(rowElement);
       blockStatsValueElements.set(row.key, valueElement);
     });
+    if (group.withTrend) {
+      const trend = document.createElement("div");
+      trend.className = "bilibili-blacklist-trend";
+      blockTrendBarElements = [];
+      for (let i = 0; i < 7; i++) {
+        const bar = document.createElement("span");
+        bar.className = "bilibili-blacklist-trend-bar";
+        trend.appendChild(bar);
+        blockTrendBarElements.push(bar);
+      }
+      statsContainer.appendChild(trend);
+    }
   });
   titleWrap.appendChild(statsContainer);
   statsContainer.style.display = isBlockStatsExpanded ? "" : "none";
@@ -3037,6 +3359,25 @@ GM_addStyle(`
     color: var(--text2, #000);
   }
 
+  /* 7 日趋势柱：高度按当周最大值归一，0 值画一条浅色底线 */
+  .bilibili-blacklist-trend {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 30px;
+    margin-top: 6px;
+  }
+
+  .bilibili-blacklist-trend-bar {
+    flex: 1 1 0;
+    min-width: 6px;
+    height: 2px;
+    background-color: #e3e5e8;
+    border-radius: 2px 2px 0 0;
+    transition: height 0.2s, background-color 0.2s;
+  }
+
   /* 头部右侧操作按钮组：[展开/收起统计明细] [关闭面板] */
   .bilibili-blacklist-panel-actions {
     display: flex;
@@ -3469,7 +3810,9 @@ function addDisplayOverlayToCard(cardElement, mode) {
 
   const hostElement = isCurrentPageCategory()
     ? cardElement.querySelector(".bili-video-card") || cardElement
-    : cardElement;
+    : isCurrentPageDynamic()
+      ? cardElement.querySelector(".bili-dyn-card-video") || cardElement
+      : cardElement;
 
   const hostStyle = getComputedStyle(hostElement);
   if (hostStyle.position === "static" || !hostStyle.position) {
@@ -3490,7 +3833,8 @@ document.addEventListener("visibilitychange", () => {
   isPageCurrentlyActive = !document.hidden;
 });
 
-const INCREMENTAL_CARD_SELECTOR = ".bili-video-card, .video-page-card-small, .feed-card";
+const INCREMENTAL_CARD_SELECTOR =
+  ".bili-video-card, .video-page-card-small, .feed-card, .bili-dyn-list__item";
 let seenCards = new WeakSet();
 const seenAdElements = new WeakSet();
 let videoHeaderReady = false;
@@ -3689,6 +4033,8 @@ function initializeScript() {
   } else if (isCurrentPageRanking()) {
     initializeRankingPage();
     blockMainPageAds();
+  } else if (isCurrentPageDynamic()) {
+    initializeDynamicPage();
   } else if (isCurrentUserSpace()) {
     initializeUserSpace();
   } else {
@@ -3697,6 +4043,7 @@ function initializeScript() {
   createBlacklistPanel();
   addBlacklistManagerButton();
   initTampermonkeyMenu();
+  startBlockStatsFlusher();
   if (globalPluginConfig.flagNetworkIntercept) {
     installNetworkInterceptors();
   }
@@ -3706,6 +4053,7 @@ let isfirstLoad = true;
 document.addEventListener("DOMContentLoaded", initializeScript);
 
 function isCurrentPageMain() {
+  if (location.hostname !== "www.bilibili.com") return false;
   return location.pathname === "/" || location.pathname === "/index.html";
 }
 
@@ -3715,6 +4063,18 @@ function initializeMainPage() {
     scanAndBlockVideoCards();
   }, 800);
   console.log("[🫥BlackList] 主页已加载🍓");
+}
+
+function isCurrentPageDynamic() {
+  return location.hostname === "t.bilibili.com";
+}
+
+function initializeDynamicPage() {
+  initializeObserver(".bili-dyn-list");
+  setTimeout(() => {
+    scanAndBlockVideoCards();
+  }, 800);
+  console.log("[🫥BlackList] 动态页已加载📰");
 }
 
 function isCurrentPageSearch() {
@@ -4503,7 +4863,7 @@ async function getFirstNonBlockedFromDom() {
     const { upName, videoTitle } = getVideoCardInfo(card);
     if (!upName || !videoTitle) continue;
     if (cfg.flagInfo && isBlacklisted(upName, videoTitle)) continue;
-    const bv = getLinkBvId(getCardHrefLink(card));
+    const bv = getCardVideoBvId(card);
     if (!bv) continue;
     if (await isBlockedByTagOrVertical(bv)) continue;
     return bv;
@@ -4667,47 +5027,195 @@ function netUrlMatches(url) {
   return false;
 }
 
+var INTERCEPT_FIELD_PROBE = false;
+function setInterceptFieldProbe(on) {
+  INTERCEPT_FIELD_PROBE = !!on;
+}
+var PROBE_INTERESTING_KEYS = [
+  "goto", "card_goto", "card_type", "bvid", "cid", "uri", "param",
+  "tid", "tname", "tname_v2", "tid_v2", "duration",
+  "is_ads", "cm_info", "ad_info", "business_info", "is_ad", "ad_cb",
+  "rcmd_reason", "rcmd_reason_style", "reason", "is_followed", "is_up",
+  "owner", "stat", "pubdate", "dimension", "track_id", "av_feature", "desc"
+];
+function probeInterceptPayload(url, parsed) {
+  if (!INTERCEPT_FIELD_PROBE) return;
+  try {
+    var data = parsed && parsed.data;
+    var items = null;
+    if (data && Array.isArray(data.item)) items = data.item;
+    else if (Array.isArray(data)) items = data;
+    console.log("[🫥BlackList][probe] 命中接口: " + url);
+    console.log(
+      "[🫥BlackList][probe] data 形态: " +
+        (Array.isArray(data) ? "(array, len=" + data.length + ")" : typeof data) +
+        (data && !Array.isArray(data) && typeof data === "object"
+          ? " keys=" + Object.keys(data).join(",")
+          : "")
+    );
+    if (!items || items.length === 0) {
+      console.log("[🫥BlackList][probe] 没有可分析的条目");
+      return;
+    }
+    var first = items[0];
+    console.log("[🫥BlackList][probe] 条目数=" + items.length);
+    console.log("[🫥BlackList][probe] item[0] 全部字段: " + Object.keys(first).join(","));
+    var picked = {};
+    PROBE_INTERESTING_KEYS.forEach(function (k) {
+      if (first[k] !== undefined) picked[k] = first[k];
+    });
+    console.log("[🫥BlackList][probe] 关注字段: " + JSON.stringify(picked));
+    console.log(
+      "[🫥BlackList][probe] item[0] 原样: " +
+        JSON.stringify(first).slice(0, 2000)
+    );
+    var gotos = {};
+    var withBiz = 0;
+    var withTid = 0;
+    var withTname = 0;
+    var withAd = 0;
+    var withDuration = 0;
+    var count = Math.min(items.length, 12);
+    for (var i = 0; i < count; i++) {
+      var it = items[i];
+      if (!it) continue;
+      gotos[it.goto || "?"] = (gotos[it.goto || "?"] || 0) + 1;
+      if (it.business_info) withBiz++;
+      if (it.tid !== undefined) withTid++;
+      if (it.tname || it.tname_v2) withTname++;
+      if (it.is_ads || it.ad_info || it.cm_info || it.ad_cb) withAd++;
+      if (it.duration !== undefined) withDuration++;
+      console.log(
+        "[🫥BlackList][probe] [" + i + "] goto=" + (it.goto || "?") +
+        " tid=" + (it.tid === undefined ? "-" : it.tid) +
+        " tname=" + (it.tname || it.tname_v2 || "-") +
+        " dur=" + (it.duration === undefined ? "-" : it.duration) +
+        " biz=" + (it.business_info ? JSON.stringify(it.business_info) : "-") +
+        " rcmd=" + (it.rcmd_reason ? JSON.stringify(it.rcmd_reason) : "-") +
+        " adField=" + (it.is_ads || it.ad_info || it.cm_info || it.ad_cb || "-") +
+        " owner=" + ((it.owner && it.owner.name) || "-") +
+        " title=" + String(it.title || "").slice(0, 24)
+      );
+    }
+    console.log(
+      "[🫥BlackList][probe] 分布: goto=" + JSON.stringify(gotos) +
+      " | business_info 非空=" + withBiz +
+      " | tid=" + withTid +
+      " | tname=" + withTname +
+      " | 广告字段=" + withAd +
+      " | duration=" + withDuration +
+      " / 共 " + count + " 条"
+    );
+  } catch (e) {
+    console.log("[🫥BlackList][probe] 勘查失败: " + (e && e.message));
+  }
+}
+
+var STREAM_REASON_TEXT = {
+  ad: "广告",
+  info: "UP/标题名",
+  tname: "分类标签",
+  videoTag: "视频标签",
+  vertical: "竖屏"
+};
+
+function getStreamBlockReason(item) {
+  if (!item) return null;
+
+  if (globalPluginConfig.flagAD && item.business_info) {
+    var biz = item.business_info;
+    if (biz.is_ad_loc === true || biz.res_id || biz.creative_type || biz.ad_cb) {
+      return "ad";
+    }
+  }
+
+  var upName = (item.owner && item.owner.name) || "";
+  var title = item.title || "";
+  if ((upName || title) && isBlacklisted(upName, title)) return "info";
+
+  var bvid = item.bvid || getLinkBvId(item.uri || "");
+  if (!bvid) return null;
+
+  var viewCached = bvApiDataCache.get(bvid);
+  if (viewCached && viewCached.data && Date.now() < viewCached.expire) {
+    if (globalPluginConfig.flagTName && isVideoTagNameBlacklisted(viewCached.data)) {
+      return "tname";
+    }
+    if (globalPluginConfig.flagVertical && isVerticalVideo(viewCached.data)) {
+      return "vertical";
+    }
+  }
+
+  var tagCached = bvTagApiDataCache.get(bvid);
+  if (
+    globalPluginConfig.flagVideoTag &&
+    tagCached &&
+    tagCached.data &&
+    Date.now() < tagCached.expire
+  ) {
+    var tags = getEligibleVideoTags(tagCached.data);
+    for (var i = 0; i < tags.length; i++) {
+      if (videoTagBlacklist.indexOf(tags[i]) !== -1) return "videoTag";
+    }
+  }
+
+  return null;
+}
+
+function filterStreamItems(items) {
+  var byReason = {};
+  var removed = 0;
+  var removedAds = 0;
+  var kept = items.filter(function (item) {
+    var reason = getStreamBlockReason(item);
+    if (!reason) return true;
+    removed++;
+    if (reason === "ad") removedAds++;
+    byReason[reason] = (byReason[reason] || 0) + 1;
+    return false;
+  });
+  return { kept: kept, removed: removed, removedAds: removedAds, byReason: byReason };
+}
+
+function describeStreamReasons(byReason) {
+  var parts = Object.keys(byReason).map(function (key) {
+    return (STREAM_REASON_TEXT[key] || key) + " " + byReason[key];
+  });
+  return parts.length ? "（" + parts.join("、") + "）" : "";
+}
+
 function rewriteRecommendation(url, responseText) {
   try {
     var parsed = JSON.parse(responseText);
     if (!parsed || typeof parsed !== "object") return responseText;
+    probeInterceptPayload(url, parsed);
 
     if (parsed.data && Array.isArray(parsed.data.item)) {
-      var before = parsed.data.item.length;
-      parsed.data.item = parsed.data.item.filter(function (item) {
-        if (!item) return true;
-        var upName = (item.owner && item.owner.name) || "";
-        var title = item.title || "";
-        if (!upName && !title) return true;
-        return !isBlacklisted(upName, title);
-      });
-      if (parsed.data.item.length === before) return responseText;
-      countNetworkInterceptItems += before - parsed.data.item.length;
+      var streamResult = filterStreamItems(parsed.data.item);
+      if (streamResult.removed === 0) return responseText;
+      parsed.data.item = streamResult.kept;
+      countNetworkInterceptItems += streamResult.removed;
+      countNetworkInterceptAds += streamResult.removedAds;
       countNetworkInterceptResponses++;
       refreshBlockCountDisplay();
       console.log(
         "[🫥BlackList] 网络拦截: 推荐流已过滤 " +
-        (before - parsed.data.item.length) + " 条"
+        streamResult.removed + " 条" + describeStreamReasons(streamResult.byReason)
       );
       return JSON.stringify(parsed);
     }
 
     if (Array.isArray(parsed.data)) {
-      var countBefore = parsed.data.length;
-      parsed.data = parsed.data.filter(function (item) {
-        if (!item) return true;
-        var upName = (item.owner && item.owner.name) || "";
-        var title = item.title || "";
-        if (!upName && !title) return true;
-        return !isBlacklisted(upName, title);
-      });
-      if (parsed.data.length === countBefore) return responseText;
-      countNetworkInterceptItems += countBefore - parsed.data.length;
+      var relatedResult = filterStreamItems(parsed.data);
+      if (relatedResult.removed === 0) return responseText;
+      parsed.data = relatedResult.kept;
+      countNetworkInterceptItems += relatedResult.removed;
+      countNetworkInterceptAds += relatedResult.removedAds;
       countNetworkInterceptResponses++;
       refreshBlockCountDisplay();
       console.log(
         "[🫥BlackList] 网络拦截: 相关推荐已过滤 " +
-        (countBefore - parsed.data.length) + " 条"
+        relatedResult.removed + " 条" + describeStreamReasons(relatedResult.byReason)
       );
       return JSON.stringify(parsed);
     }

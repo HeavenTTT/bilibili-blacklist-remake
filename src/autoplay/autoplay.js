@@ -476,7 +476,7 @@ async function getFirstNonBlockedFromDom() {
     if (!upName || !videoTitle) continue;
     // UP名/标题屏蔽
     if (cfg.flagInfo && isBlacklisted(upName, videoTitle)) continue;
-    const bv = getLinkBvId(getCardHrefLink(card));
+    const bv = getCardVideoBvId(card);
     if (!bv) continue;
     // 标签/竖屏屏蔽：用 view 接口精确判定
     if (await isBlockedByTagOrVertical(bv)) continue;

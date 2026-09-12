@@ -26,6 +26,7 @@
       "src/storage/storage.js",
       "src/utils/utils.js",
       "src/core/core.js",
+      "src/core/stats.js",
       "src/core/video-data.js",
       "src/ui/ui.js",
       "src/observer/observer.js",

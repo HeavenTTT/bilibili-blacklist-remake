@@ -14,6 +14,8 @@ let blockCountTitleElement;
 let blockCountDisplayElement = null;
 // 面板头部统计明细的数值元素（Map: row.key -> <b>），创建一次后只更新 textContent
 let blockStatsValueElements = null;
+// 统计明细里"7 日趋势柱"的元素数组（创建一次，只改高度/颜色）
+let blockTrendBarElements = null;
 // 统计明细是否展开（默认收起；收起时 refreshBlockCountDisplay 跳过 11 个数值的写入）
 let isBlockStatsExpanded = false;
 
@@ -46,6 +48,7 @@ let countProcessedCards = 0; // 累计判定完成的卡片数（含取消屏蔽
 let countApiViewRequests = 0; // view 接口真实请求次数（命中缓存不计）
 let countApiTagRequests = 0; // 视频标签接口真实请求次数（命中缓存不计）
 let countNetworkInterceptItems = 0; // 网络拦截累计过滤掉的条目数
+let countNetworkInterceptAds = 0; // 其中按官方 business_info 判定为广告的条目数
 let countNetworkInterceptResponses = 0; // 网络拦截实际改写过的响应次数
 
 // “未处理”卡片：进入视频页时先用 CSS filter 遮盖（不插按钮/kirby 遮罩子元素），
@@ -116,6 +119,17 @@ function getBlockContainerHost(cardElement) {
     if (biliVideoCard) {
       biliVideoCard.classList.add("bilibili-blacklist-block-container-host");
       return biliVideoCard;
+    }
+  } else if (isCurrentPageDynamic()) {
+    // 动态页：把容器挂在动态里的视频卡上（图文动态没有视频卡，则退回整个动态条目）
+    const dynCard = cardElement.querySelector(".bili-dyn-card-video");
+    if (dynCard) {
+      const dynStyle = getComputedStyle(dynCard);
+      if (dynStyle.position === "static" || !dynStyle.position) {
+        dynCard.style.position = "relative";
+      }
+      dynCard.classList.add("bilibili-blacklist-block-container-host");
+      return dynCard;
     }
   }
   // 默认宿主：确保可被绝对定位的子元素正常显示
@@ -575,6 +589,9 @@ function queryAllVideoCards() {
     return document.querySelectorAll(".feed-card");
   } else if (isCurrentPageSearch()) {
     return document.querySelectorAll(".bili-video-card");
+  } else if (isCurrentPageDynamic()) {
+    // 动态页：以"整条动态"为屏蔽单位（含转发/图文动态；其中的视频卡只是它的一部分）
+    return document.querySelectorAll(".bili-dyn-list__item");
   } else if (isCurrentPageRanking()) {
     return document.querySelectorAll(
       ".bili-video-card, .rank-item, .video-card, .rank-card"
@@ -721,6 +738,20 @@ function toggleShowAllBlockedVideos() {
  * @returns {{upName: string, videoTitle: string}} 包含UP主名称和视频标题的对象。
  */
 function getVideoCardInfo(cardElement) {
+  // 动态页（t.bilibili.com）：卡片是"整条动态"，发布者在 .bili-dyn-title__text、
+  // 视频标题在 .bili-dyn-card-video__title。这里必须单独处理：动态里还混着直播用户、
+  // 话题等多个 .name，走下面的通用选择器会取错人。
+  if (isCurrentPageDynamic()) {
+    const dynNameElement = cardElement.querySelector(".bili-dyn-title__text");
+    const upName = dynNameElement ? dynNameElement.textContent.trim() : "";
+    // 只认明确的视频标题；图文/转发动态没有它 → 留空（宁可不判标题，也不拿"时长+播放量"
+    // 这类混合文本去跑正则，避免误伤）。
+    let videoTitle = "";
+    const dynVideoTitle = cardElement.querySelector(".bili-dyn-card-video__title");
+    if (dynVideoTitle) videoTitle = dynVideoTitle.textContent.trim();
+    return { upName, videoTitle };
+  }
+
   let upName = "";
   let videoTitle = "";
 
