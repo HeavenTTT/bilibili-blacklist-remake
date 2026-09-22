@@ -2,6 +2,15 @@
 
 ## [未发布]
 
+### 修复
+- **顶栏管理按钮在 B 站改版后失效**：顶栏导航项容器从 `.right-entry` 换成了 `.right-entry__main`
+  （`.right-entry` 仍在，但只剩外框），且新版导航项**不是 `<li>`**，旧代码的「`li` 数量 > 6」就绪判断会永远为假，
+  函数每次都在插入前静默 `return`，按钮整体消失（连警告都不打）。
+  现改为：新增 `resolveHeaderEntryHost()` 优先取 `.right-entry__main`、旧宿主 `.right-entry` 兜底；
+  就绪判断从「`li` 数量 > 6」改为「容器内已出现导航项（`a, li, .right-entry__item`）」——
+  既能避开 Vue 延迟渲染把按钮顶掉，又不会因改版后导航项换了标签而永久空转。
+  插入位置仍是第 2 个导航项之前，`.right-entry-item` / `.right-entry__outside` 与相关 CSS 未变。
+
 ### 新增
 - 新增视频标签屏蔽功能：通过 `/x/tag/archive/tags` 读取 `data[].tag_name`，支持在卡片上直接添加规则。
 - 管理面板新增「屏蔽标签」标签页，支持视频标签黑名单的添加、移除和持久化。

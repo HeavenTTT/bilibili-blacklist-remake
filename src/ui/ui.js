@@ -152,51 +152,72 @@ function setupCardButtonDelegation() {
 }
 
 /**
+ * 解析右侧导航条的「导航项容器」。
+ *
+ * B 站顶栏改版后结构变为 `.right-entry > .right-entry__main > [导航项…]`：
+ * `.right-entry` 仍在，但只剩外框，导航项搬进了 `.right-entry__main`。
+ * 所以优先取新宿主；旧页面（A/B 未改版）再退回 `.right-entry`。
+ * 返回 null 表示顶栏还没渲染出来。
+ */
+function resolveHeaderEntryHost() {
+  return (
+    document.querySelector(".right-entry__main") ||
+    document.querySelector(".right-entry") ||
+    null
+  );
+}
+
+/**
  * 将黑名单管理器按钮添加到右侧导航条。
  */
 function addBlacklistManagerButton() {
   if (!globalPluginConfig.flagHeaderButton) return; // 油猴菜单可关闭顶部按钮
-  const rightEntry = document.querySelector(".right-entry");
+  // B 站顶栏改版后，导航项容器从 `.right-entry` 换成了 `.right-entry__main`
+  // （`.right-entry` 只剩外框）。优先用新宿主，同时保留旧宿主兜底。
+  const rightEntry = resolveHeaderEntryHost();
   if (!rightEntry) {
-    console.warn("[🫥BlackList] 未找到右侧导航栏");
+    console.warn("[🫥BlackList] 未找到右侧导航栏(.right-entry__main / .right-entry)");
     return;
   }
-  // 顶栏由Vue延迟渲染，等li数量超过6个(顶栏基本渲染完成)后再插入按钮，避免被重渲染顶掉
-  if (rightEntry.querySelectorAll("li").length <= 6) {
+  // 幂等：已经挂过就直接返回，避免重复插入。
+  if (rightEntry.querySelector("#bilibili-blacklist-manager-button")) return;
+  // 顶栏由 Vue 延迟渲染：容器存在 ≠ 导航项渲染完成，过早插入会被重渲染顶掉。
+  // 注意**只等"有内容"**，不再用旧的「li 数量 > 6」经验值判断 —— 改版后导航项
+  // 既不是 li、数量也变了，旧阈值会让本函数永远提前 return（按钮静默消失）。
+  if (!rightEntry.querySelector("a, li, .right-entry__item")) {
     return;
   }
-  if (!rightEntry.querySelector("#bilibili-blacklist-manager-button")) {
-    const listItem = document.createElement("li");
-    listItem.id = "bilibili-blacklist-manager-button";
-    listItem.className = "v-popover-wrap";
 
-    const button = document.createElement("div");
-    button.className = "right-entry-item";
+  const listItem = document.createElement("li");
+  listItem.id = "bilibili-blacklist-manager-button";
+  listItem.className = "v-popover-wrap";
 
-    const icon = document.createElement("div");
-    icon.className = "right-entry__outside";
-    icon.innerHTML = getKirbySVG(); // 获取卡比SVG图标
+  const button = document.createElement("div");
+  button.className = "right-entry-item";
 
-    blockCountDisplayElement = document.createElement("span");
-    blockCountDisplayElement.textContent = `0`;
+  const icon = document.createElement("div");
+  icon.className = "right-entry__outside";
+  icon.innerHTML = getKirbySVG(); // 获取卡比SVG图标
 
-    button.appendChild(icon);
-    button.appendChild(blockCountDisplayElement);
-    listItem.appendChild(button);
+  blockCountDisplayElement = document.createElement("span");
+  blockCountDisplayElement.textContent = `0`;
 
-    // 将按钮插入到导航栏的特定位置
-    if (rightEntry.children.length > 1) {
-      rightEntry.insertBefore(listItem, rightEntry.children[1]);
-    } else {
-      rightEntry.appendChild(listItem);
-    }
+  button.appendChild(icon);
+  button.appendChild(blockCountDisplayElement);
+  listItem.appendChild(button);
 
-    // 点击按钮显示/隐藏管理面板
-    listItem.addEventListener("click", () => {
-      managerPanel.style.display =
-        managerPanel.style.display === "flex" ? "none" : "flex";
-    });
+  // 将按钮插入到导航栏的特定位置（跟旧版一致：插到第 2 个导航项之前）
+  if (rightEntry.children.length > 1) {
+    rightEntry.insertBefore(listItem, rightEntry.children[1]);
+  } else {
+    rightEntry.appendChild(listItem);
   }
+
+  // 点击按钮显示/隐藏管理面板
+  listItem.addEventListener("click", () => {
+    managerPanel.style.display =
+      managerPanel.style.display === "flex" ? "none" : "flex";
+  });
 }
 
 /**

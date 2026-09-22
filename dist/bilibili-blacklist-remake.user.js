@@ -2033,46 +2033,54 @@ function setupCardButtonDelegation() {
   );
 }
 
+function resolveHeaderEntryHost() {
+  return (
+    document.querySelector(".right-entry__main") ||
+    document.querySelector(".right-entry") ||
+    null
+  );
+}
+
 function addBlacklistManagerButton() {
   if (!globalPluginConfig.flagHeaderButton) return;
-  const rightEntry = document.querySelector(".right-entry");
+  const rightEntry = resolveHeaderEntryHost();
   if (!rightEntry) {
-    console.warn("[🫥BlackList] 未找到右侧导航栏");
+    console.warn("[🫥BlackList] 未找到右侧导航栏(.right-entry__main / .right-entry)");
     return;
   }
-  if (rightEntry.querySelectorAll("li").length <= 6) {
+  if (rightEntry.querySelector("#bilibili-blacklist-manager-button")) return;
+  if (!rightEntry.querySelector("a, li, .right-entry__item")) {
     return;
   }
-  if (!rightEntry.querySelector("#bilibili-blacklist-manager-button")) {
-    const listItem = document.createElement("li");
-    listItem.id = "bilibili-blacklist-manager-button";
-    listItem.className = "v-popover-wrap";
 
-    const button = document.createElement("div");
-    button.className = "right-entry-item";
+  const listItem = document.createElement("li");
+  listItem.id = "bilibili-blacklist-manager-button";
+  listItem.className = "v-popover-wrap";
 
-    const icon = document.createElement("div");
-    icon.className = "right-entry__outside";
-    icon.innerHTML = getKirbySVG();
+  const button = document.createElement("div");
+  button.className = "right-entry-item";
 
-    blockCountDisplayElement = document.createElement("span");
-    blockCountDisplayElement.textContent = `0`;
+  const icon = document.createElement("div");
+  icon.className = "right-entry__outside";
+  icon.innerHTML = getKirbySVG();
 
-    button.appendChild(icon);
-    button.appendChild(blockCountDisplayElement);
-    listItem.appendChild(button);
+  blockCountDisplayElement = document.createElement("span");
+  blockCountDisplayElement.textContent = `0`;
 
-    if (rightEntry.children.length > 1) {
-      rightEntry.insertBefore(listItem, rightEntry.children[1]);
-    } else {
-      rightEntry.appendChild(listItem);
-    }
+  button.appendChild(icon);
+  button.appendChild(blockCountDisplayElement);
+  listItem.appendChild(button);
 
-    listItem.addEventListener("click", () => {
-      managerPanel.style.display =
-        managerPanel.style.display === "flex" ? "none" : "flex";
-    });
+  if (rightEntry.children.length > 1) {
+    rightEntry.insertBefore(listItem, rightEntry.children[1]);
+  } else {
+    rightEntry.appendChild(listItem);
   }
+
+  listItem.addEventListener("click", () => {
+    managerPanel.style.display =
+      managerPanel.style.display === "flex" ? "none" : "flex";
+  });
 }
 
 function toggleHeaderButtonVisibility() {
